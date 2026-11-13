@@ -1,0 +1,10 @@
+{
+  "name": "presupuestalino",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Captura de recetas ópticas manuscritas → OCR → Google Sheets",
+  "scripts": {
+    "test": "node --test tests/logic.test.js",
+    "serve": "python -m http.server 8080 --directory web"
+  }
+}
