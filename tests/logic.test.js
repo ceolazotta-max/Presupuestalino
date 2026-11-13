@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const L = require('../apps-script/Logic.js');
 const { validateRxValue } = require('../web/js/validate.js');
+const Mock = require('../web/js/mock.js');
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const dec = (s) => Buffer.from(s, 'base64url').toString('utf8');
@@ -109,4 +110,19 @@ test('validateRxValue ópticos', () => {
   assert.match(validateRxValue('dip', 'abc'), /Formato/);
   assert.equal(validateRxValue('text', 'lo que sea'), '');
   assert.equal(validateRxValue('esfera', ''), '');
+});
+
+test('mockFields coincide con buildRxFields de Logic.js', () => {
+  assert.deepEqual(Mock.mockFields(), L.buildRxFields());
+});
+
+test('Mock.handle simula ocr y save', async () => {
+  const ocr = await Mock.handle({ action: 'ocr' });
+  assert.equal(ocr.ok, true);
+  assert.equal(ocr.fields.length, 22);
+
+  const save = await Mock.handle({ action: 'save', photoName: 'María Gómez' });
+  assert.equal(save.ok, true);
+  assert.equal(save.demo, true);
+  assert.match(save.fotoNombre, /^\d{4}-\d{2}-\d{2}_\d{6}_Maria-Gomez\.jpg$/);
 });
