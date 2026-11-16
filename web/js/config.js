@@ -21,8 +21,31 @@ window.APP_CONFIG = {
     { key: 'nombre', label: 'Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
     { key: 'telefono', label: 'Teléfono', type: 'tel', autocomplete: 'tel' },
     { key: 'email', label: 'Email cliente', type: 'email', autocomplete: 'email' },
-    { key: 'sucursal', label: 'Sucursal', type: 'text' },
-    { key: 'notas', label: 'Notas', type: 'textarea' }
+    {
+      key: 'origen',
+      label: '¿De dónde nos conoce?',
+      type: 'select',
+      options: ['Ya era cliente', 'Recomendación', 'Redes sociales', 'Calle']
+    },
+    {
+      key: 'origen_quien',
+      label: 'Quién',
+      type: 'text',
+      showWhen: { field: 'origen', value: 'Recomendación' }
+    },
+    {
+      key: 'origen_cual',
+      label: 'Cuál',
+      type: 'text',
+      showWhen: { field: 'origen', value: 'Redes sociales' }
+    },
+    { key: 'notas', label: 'Notas', type: 'textarea' },
+    {
+      key: 'vendedor',
+      label: 'Vendedor',
+      type: 'select',
+      options: ['Gabriel', 'Micaela', 'Yamila']
+    }
   ],
 
   // Compresión de imagen en el cliente.

@@ -91,8 +91,15 @@ test('isValidUuid / parseCsvList / sanitizeExtraFields', () => {
   assert.ok(L.isValidUuid('3f2b8c1e-1a2b-4c3d-8e9f-0a1b2c3d4e5f'));
   assert.ok(!L.isValidUuid('x'));
   assert.deepEqual(L.parseCsvList(' A@x.com, ,b@x.com'), ['a@x.com', 'b@x.com']);
-  const ex = L.sanitizeExtraFields([{ label: 'Teléfono<script>', value: '=1+1' }, { label: '', value: 'x' }]);
-  assert.deepEqual(ex, [{ label: 'Teléfonoscript', value: "'=1+1" }]);
+  const ex = L.sanitizeExtraFields([
+    { label: 'Teléfono<script>', value: '=1+1' },
+    { label: '¿De dónde nos conoce?', value: 'Calle' },
+    { label: '', value: 'x' }
+  ]);
+  assert.deepEqual(ex, [
+    { label: 'Teléfonoscript', value: "'=1+1" },
+    { label: '¿De dónde nos conoce?', value: 'Calle' }
+  ]);
   assert.equal(L.sanitizeExtraFields(new Array(50).fill({ label: 'a', value: 'b' })).length, 20);
 });
 

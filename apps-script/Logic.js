@@ -175,7 +175,7 @@ function rateKey(action, email, nowMs) {
 function sanitizeExtraFields(list) {
   if (!Array.isArray(list)) return [];
   return list.slice(0, 20).map(function (f) {
-    var label = String((f && f.label) || '').replace(/[^\p{L}\p{N} ._()/-]/gu, '').trim().slice(0, 40);
+    var label = String((f && f.label) || '').replace(/[^\p{L}\p{N} ._()/?¿-]/gu, '').trim().slice(0, 40);
     return { label: label, value: sanitizeCell(f && f.value) };
   }).filter(function (f) { return f.label; });
 }

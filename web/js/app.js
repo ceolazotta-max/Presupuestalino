@@ -13,6 +13,7 @@
     original: {},     // key → valor devuelto por OCR
     extras: [],       // [{ texto, ubicacion, confianza, decision: null|'keep'|'discard', originalTexto }]
     uuid: null,
+    prefilledName: '',
     screen: 'login',
     reauthResolve: null
   };
@@ -125,7 +126,6 @@
     state.auth = a;
     $('#user').hidden = false;
     $('#user-email').textContent = a.email;
-    $('#seller').value = a.email;
   }
 
   function getToken() {
@@ -426,6 +426,12 @@
     var warns = document.querySelectorAll('#rx-form .invalid').length;
     if (warns && !confirm('Hay ' + warns + ' valor(es) con advertencias. ¿Continuar igual?')) return;
     setError('#review-error', '');
+    var paciente = (collectRx().paciente || '').trim();
+    var nameInput = $('#extra-form').elements[C.PHOTO_NAME_FIELD];
+    if (nameInput && paciente && (!nameInput.value.trim() || nameInput.value === state.prefilledName)) {
+      nameInput.value = paciente;
+      state.prefilledName = paciente;
+    }
     go('extra');
     var first = $('#extra-fields input, #extra-fields textarea');
     if (first) first.focus();
@@ -439,6 +445,10 @@
     C.EXTRA_FIELDS.forEach(function (f) {
       var label = document.createElement('label');
       label.className = 'field';
+      if (f.showWhen) {
+        label.dataset.showField = f.showWhen.field;
+        label.dataset.showValue = f.showWhen.value;
+      }
       var span = document.createElement('span');
       span.innerHTML = '';
       span.textContent = f.label;
@@ -459,6 +469,7 @@
           opt.textContent = o || '— Elegir —';
           el.appendChild(opt);
         });
+        el.addEventListener('change', syncConditionalFields);
       } else {
         el = document.createElement('input');
         el.type = f.type || 'text';
@@ -472,6 +483,21 @@
       label.appendChild(el);
       root.appendChild(label);
     });
+    syncConditionalFields();
+  }
+
+  function syncConditionalFields() {
+    var form = $('#extra-form');
+    document.querySelectorAll('#extra-fields label[data-show-field]').forEach(function (label) {
+      var ctrl = form.elements[label.dataset.showField];
+      var show = !!ctrl && ctrl.value === label.dataset.showValue;
+      label.hidden = !show;
+      var input = label.querySelector('input, textarea, select');
+      if (input) {
+        input.disabled = !show;
+        if (!show) input.value = '';
+      }
+    });
   }
 
   async function save(ev) {
@@ -481,7 +507,8 @@
     setError('#extra-error', '');
 
     var extraFields = C.EXTRA_FIELDS.map(function (f) {
-      return { key: f.key, label: f.label, value: form.elements[f.key].value.trim() };
+      var el = form.elements[f.key];
+      return { key: f.key, label: f.label, value: (el && !el.disabled) ? el.value.trim() : '' };
     });
     var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
     var rxValues = collectRx();
@@ -530,8 +557,9 @@
     state.extras = [];
     state.original = {};
     state.uuid = null;
+    state.prefilledName = '';
     $('#extra-form').reset();
-    if (state.auth) $('#seller').value = state.auth.email;
+    syncConditionalFields();
     retake();
   }
 

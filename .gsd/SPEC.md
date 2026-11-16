@@ -223,7 +223,7 @@ Preguntas abiertas resueltas con defaults **configurables**, sin tocar lógica:
 
 | # | Pregunta | Default v0 | Dónde se cambia |
 |---|---|---|---|
-| Q1 | Campos del form adicional | Nombre cliente*, Teléfono, Email, Sucursal, Notas. Vendedor = email del login (auto) | `web/config.js` → `EXTRA_FIELDS` |
+| Q1 | Campos del form adicional | Nombre cliente* (precargado desde paciente), Teléfono, Email cliente, ¿De dónde nos conoce? (Ya era cliente / Recomendación → Quién / Redes sociales → Cuál / Calle), Notas, Vendedor (desplegable: Gabriel, Micaela, Yamila) | `web/js/config.js` → `EXTRA_FIELDS` |
 | Q2 | Columnas del Sheet existente | **Mapeo por encabezado**: el script lee la fila 1, escribe cada dato bajo su encabezado y agrega al final los encabezados faltantes. Sheet vacío → crea encabezados | Automático |
 | Q3 | Dominio corporativo | Script Property `ALLOWED_DOMAIN` (+ opcional `ALLOWED_EMAILS`) | Script Properties |
 | Q4 | Dueño de Script/Drive | La cuenta corporativa que despliega el Apps Script | `docs/SETUP.md` |
