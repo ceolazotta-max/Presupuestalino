@@ -599,12 +599,11 @@
     var stillValid = false;
     state.catalog.forEach(function (p) {
       var chk = Q.checkProductForEye(p, eyeRx, uso);
+      if (!chk.allowed) return;
       var opt = document.createElement('option');
       opt.value = p.codigo;
-      opt.disabled = !chk.allowed;
-      opt.textContent = p.nombre + ' [' + p.tipo + '] — ' + Q.fmtMoney(p.precioMedioPar) +
-        (chk.allowed ? '' : ' (No apto: ' + chk.reason + ')');
-      if (sel.mode === 'catalog' && sel.codigo === p.codigo && chk.allowed) stillValid = true;
+      opt.textContent = p.nombre + ' [' + p.tipo + '] — ' + Q.fmtMoney(p.precioMedioPar);
+      if (sel.mode === 'catalog' && sel.codigo === p.codigo) stillValid = true;
       select.appendChild(opt);
     });
 
@@ -627,8 +626,8 @@
     $('#q-manual-' + eye).hidden = !isManual;
     var tipoSel = $('#q-man-tipo-' + eye);
     var stockOpt = tipoSel.querySelector('option[value="Stock"]');
+    stockOpt.hidden = !stockCheck.ok;
     stockOpt.disabled = !stockCheck.ok;
-    stockOpt.textContent = stockCheck.ok ? 'Stock' : 'Stock (bloqueado)';
     if (!stockCheck.ok && sel.manual.tipo === 'Stock') sel.manual.tipo = 'Laboratorio';
 
     $('#q-man-nombre-' + eye).value = sel.manual.nombre;
