@@ -42,6 +42,7 @@ window.Api = (function () {
   }
 
   return {
+    catalog: function (idToken) { return call({ action: 'catalog', idToken: idToken }, 30000); },
     ocr: function (idToken, image) { return call({ action: 'ocr', idToken: idToken, image: image }, 120000); },
     save: function (p) { return call(Object.assign({ action: 'save' }, p), 90000); }
   };

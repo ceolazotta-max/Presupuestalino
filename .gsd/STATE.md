@@ -1,39 +1,34 @@
 # STATE
 
-**Posición:** Fase 1 completa (Waves 1, 2 y 3 cerradas). Siguiente: Fase 2 (Despliegue real por el usuario).
-**Última actualización:** 2026-11-13
+**Posición:** Fase 1 completa (incluye Paso 4 Presupuestador). Siguiente: Fase 2 (Despliegue real por el usuario).
+**Última actualización:** 2026-11-16
 
 ## Decisiones clave
 - Frontend: GitHub Pages (`web/`), PWA, vanilla JS (sin build).
-- Backend: Apps Script Web App, acción `ocr` / `save`.
+- Backend: Apps Script Web App, acciones `catalog` / `ocr` / `save`.
 - OCR: Gemini con salida JSON estructurada.
 - Auth: GIS ID token + validación servidor (ver SPEC §13).
-- Sheet: mapeo por encabezado.
+- Sheet: mapeo por encabezado en hoja principal + pestaña `Catalogo` autogenerada con 13 cristales semilla.
+- Presupuestador: medio par (`OD` / `OI`), transposición a cilindro negativo, bloqueo estricto Stock vs Laboratorio, carga manual guardable en catálogo, Efectivo `-10%`, Transferencia, Tarjeta y Plan Cristalino, impresión/PDF e imagen PNG para WhatsApp.
 
 ## Wave 1–3 Summary
 
-**Objective:** Completar prototipo v0 (lógica compartida, backend Apps Script, frontend PWA con modo demo, workflow de GitHub Pages, tests y guía de setup).
+**Objective:** Completar prototipo v0 con flujo completo de 4 pasos (Foto → Revisar → Datos → Presupuesto → Guardar).
 
 **Changes:**
 - Wave 1 (`ca47a53`): `apps-script/Logic.js`, `web/js/validate.js`, `tests/logic.test.js`, `package.json`, `.gitignore`.
-- Wave 2 (`89f89f6` + `3c2f5e4`): `apps-script/Code.js`, `apps-script/appsscript.json`, `web/index.html`, `web/css/styles.css`, `web/js/config.js`, `web/js/mock.js`, `web/js/api.js`, `web/js/app.js`, `web/manifest.webmanifest`, `web/sw.js`, `web/icons/icon.svg`, `web/icons/icon-192.png`, `.github/workflows/pages.yml`, ampliación de `tests/logic.test.js`.
-- Wave 3: `docs/SETUP.md`, `README.md`, actualización de `.gsd/ROADMAP.md` y `.gsd/STATE.md`.
-
-**Files Touched:**
-- `apps-script/Code.js`, `apps-script/Logic.js`, `apps-script/appsscript.json`
-- `web/` (`index.html`, `manifest.webmanifest`, `sw.js`, `css/styles.css`, `icons/*`, `js/*`)
-- `.github/workflows/pages.yml`, `tests/logic.test.js`, `docs/SETUP.md`, `README.md`, `package.json`, `.gitignore`
-- `.gsd/SPEC.md`, `.gsd/ROADMAP.md`, `.gsd/STATE.md`
+- Wave 2 (`89f89f6`, `3c2f5e4`, `64dc589`): backend `Code.js`, PWA `web/`, precarga nombre desde receta, origen condicional, vendedor desplegable y Paso 4 presupuestador (`web/js/quote.js` + catálogo + ficha imprimible/WhatsApp).
+- Wave 3 (`5bfe61b`): `docs/SETUP.md`, `README.md`, actualización de `.gsd/ROADMAP.md`, `.gsd/SPEC.md` y `.gsd/STATE.md`.
 
 **Verification:**
 - `node --check` en `apps-script/*.js`, `web/js/*.js` y `web/sw.js`: OK (exit 0).
-- `node --test tests/logic.test.js`: 13/13 tests pass.
+- `node --test tests/logic.test.js`: todos los tests unitarios pasan.
 
 **Risks/Debt:**
-- Faltan pruebas E2E reales contra Apps Script + OAuth + Gemini (Fase 2/3) y captura visual en mobile/desktop.
-- Ajustar `RX_SCHEMA` / `EXTRA_FIELDS` según 3–5 recetas ficticias o anonimizadas reales de la óptica.
+- Faltan pruebas E2E reales contra Apps Script + OAuth + Gemini (Fase 2/3) y validación visual del Paso 4 en navegador mobile/desktop.
+- Cargar precios reales en la pestaña `Catalogo` del Sheet tras ejecutar `setupCheck()`.
 - En producción usar Gemini pago o Vertex AI (datos de salud, Ley 25.326).
 
 **Next Wave TODO:**
-- Seguir `docs/SETUP.md` para configurar Google Cloud (OAuth Internal), Script Properties y publicar en GitHub Pages.
-- Correr `setupCheck()` en Apps Script y probar flujo completo con 10 recetas de prueba (Fase 3).
+- Crear o abrir Google Sheet en Drive, pegar `SHEET_ID` y `DRIVE_FOLDER_ID` en Script Properties y correr `setupCheck()` (ver `docs/SETUP.md`).
+- Probar flujo completo en modo demo (`npm run serve`) y luego en Fase 3 con 10 recetas de prueba.

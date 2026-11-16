@@ -37,6 +37,7 @@ function doPost(e) {
     var user = authenticate_(body.idToken);
     switch (body.action) {
       case 'ping': return json_({ ok: true, email: user.email });
+      case 'catalog': return json_(handleCatalog_(user));
       case 'ocr': return json_(handleOcr_(user, body));
       case 'save': return json_(handleSave_(user, body));
       default: throw httpError_(400, 'Acción desconocida');
@@ -127,6 +128,44 @@ function countFail_() {
   } catch (e) { /* no bloquear respuesta */ }
 }
 
+// ---------- Catálogo ----------
+
+function ensureCatalogSheet_(ss) {
+  var sheet = ss.getSheetByName('Catalogo');
+  if (!sheet) {
+    sheet = ss.insertSheet('Catalogo');
+    var rows = [CATALOG_HEADERS].concat(SEED_CATALOG_ITEMS.map(catalogItemToRow));
+    sheet.getRange(1, 1, rows.length, CATALOG_HEADERS.length).setValues(rows);
+    sheet.getRange(1, 1, 1, CATALOG_HEADERS.length).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  } else if (sheet.getLastRow() === 0) {
+    var initRows = [CATALOG_HEADERS].concat(SEED_CATALOG_ITEMS.map(catalogItemToRow));
+    sheet.getRange(1, 1, initRows.length, CATALOG_HEADERS.length).setValues(initRows);
+    sheet.getRange(1, 1, 1, CATALOG_HEADERS.length).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function handleCatalog_(user) {
+  var c = cfg_();
+  if (!c.sheetId) throw httpError_(500, 'Falta SHEET_ID');
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get('catalog_items');
+  if (cached) return { ok: true, items: JSON.parse(cached) };
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var ss = SpreadsheetApp.openById(c.sheetId);
+    var catSheet = ensureCatalogSheet_(ss);
+    var values = catSheet.getDataRange().getValues();
+    var items = parseCatalogRows(values);
+    cache.put('catalog_items', JSON.stringify(items), 300);
+    return { ok: true, items: items };
+  } finally { lock.releaseLock(); }
+}
+
 // ---------- OCR ----------
 
 function handleOcr_(user, body) {
@@ -207,10 +246,45 @@ function handleSave_(user, body) {
     record.push(
       ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
       ['Es receta (IA)', body.isRx === false ? 'No' : 'Sí'],
-      ['Corregido por usuario', body.corrected ? 'Sí' : 'No'],
+      ['Corregido por usuario', body.corrected ? 'Sí' : 'No']
+    );
+    var q = body.quoteSummary && typeof body.quoteSummary === 'object' ? body.quoteSummary : null;
+    if (q) {
+      record.push(
+        ['Uso anteojo', sanitizeCell(q.uso, 40)],
+        ['Ojos cotizados', sanitizeCell(q.eyesMode, 40)],
+        ['½ Par OD', sanitizeCell(q.odNombre, 140)],
+        ['Tipo OD', sanitizeCell(q.odTipo, 30)],
+        ['Precio ½ OD', sanitizeCell(q.odPrecio, 30)],
+        ['½ Par OI', sanitizeCell(q.oiNombre, 140)],
+        ['Tipo OI', sanitizeCell(q.oiTipo, 30)],
+        ['Precio ½ OI', sanitizeCell(q.oiPrecio, 30)],
+        ['Armazón', sanitizeCell(q.armazon, 140)],
+        ['Precio Armazón', sanitizeCell(q.armazonPrecio, 30)],
+        ['Descuento / OS', sanitizeCell(q.descuento, 80)],
+        ['Seña', sanitizeCell(q.sena, 30)],
+        ['Total Lista', sanitizeCell(q.totalLista, 30)],
+        ['Total Efectivo (-10%)', sanitizeCell(q.totalEfectivo, 30)],
+        ['Plan Cristalino', sanitizeCell(q.planCristalino, 300)]
+      );
+    }
+    record.push(
       ['Foto', file.getUrl()],
       ['OCR crudo', sanitizeCell(body.raw, 45000)]
     );
+
+    if (Array.isArray(body.newCatalogItems) && body.newCatalogItems.length) {
+      var catSheet = ensureCatalogSheet_(ss);
+      var addedCat = [];
+      body.newCatalogItems.slice(0, 4).forEach(function (it, i) {
+        var clean = sanitizeCatalogItem(it, stamp + '-' + (i + 1));
+        if (clean) addedCat.push(catalogItemToRow(clean));
+      });
+      if (addedCat.length) {
+        catSheet.getRange(catSheet.getLastRow() + 1, 1, addedCat.length, CATALOG_HEADERS.length).setValues(addedCat);
+        cache.remove('catalog_items');
+      }
+    }
 
     var lastCol = Math.max(sheet.getLastColumn(), 1);
     var existing = sheet.getLastRow() ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
@@ -263,7 +337,13 @@ function setupCheck() {
   out.push('OAUTH_CLIENT_ID: ' + (c.clientId ? 'OK' : 'FALTA'));
   out.push('ALLOWED_DOMAIN: ' + (c.domain || 'FALTA'));
   out.push('ALLOWED_EMAILS: ' + (c.allowedEmails.length ? c.allowedEmails.length + ' usuarios' : '(todo el dominio)'));
-  try { out.push('Sheet: ' + SpreadsheetApp.openById(c.sheetId).getName()); } catch (e) { out.push('Sheet: ERROR ' + e.message); }
+  try {
+    var ss = SpreadsheetApp.openById(c.sheetId);
+    out.push('Sheet: ' + ss.getName());
+    var catSheet = ensureCatalogSheet_(ss);
+    var catCount = parseCatalogRows(catSheet.getDataRange().getValues()).length;
+    out.push('Catalogo: OK (' + catCount + ' productos activos)');
+  } catch (e) { out.push('Sheet/Catalogo: ERROR ' + e.message); }
   try { out.push('Carpeta: ' + DriveApp.getFolderById(c.folderId).getName()); } catch (e) { out.push('Carpeta: ERROR ' + e.message); }
   try {
     var r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + c.geminiModel,

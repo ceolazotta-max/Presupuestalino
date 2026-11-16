@@ -61,12 +61,45 @@
 
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+  function getQuoteMod() {
+    if (root.Quote) return root.Quote;
+    if (typeof require === 'function') return require('./quote.js');
+    return null;
+  }
+
+  var demoExtraCatalog = [];
+
   async function handle(payload) {
+    if (payload.action === 'catalog') {
+      await wait(150);
+      var q = getQuoteMod();
+      var base = q ? q.SEED_CATALOG : [];
+      return { ok: true, items: base.concat(demoExtraCatalog) };
+    }
     await wait(1200);
     if (payload.action === 'ocr') {
       return { ok: true, fields: mockFields(), rx: JSON.parse(JSON.stringify(RX)), raw: JSON.stringify(RX) };
     }
     if (payload.action === 'save') {
+      if (Array.isArray(payload.newCatalogItems) && payload.newCatalogItems.length) {
+        payload.newCatalogItems.forEach(function (it, idx) {
+          var isLab = /^lab/i.test(String(it.tipo || '')) || (it.diseno && it.diseno !== 'Monofocal');
+          demoExtraCatalog.push({
+            codigo: 'DEMO-' + (demoExtraCatalog.length + idx + 1),
+            nombre: it.nombre,
+            tipo: isLab ? 'Laboratorio' : 'Stock',
+            diseno: it.diseno || 'Monofocal',
+            indice: it.indice || '1.50',
+            tratamiento: it.tratamiento || '',
+            esfMin: isLab ? -20 : -10,
+            esfMax: isLab ? 14 : 6,
+            cilMax: isLab ? 6 : 2,
+            sumaMax: isLab ? 22 : 10,
+            precioMedioPar: Number(it.precioMedioPar) || 0,
+            activo: 'Sí'
+          });
+        });
+      }
       var copy = Object.assign({}, payload, { image: '[' + (payload.image || '').length + ' chars]' });
       console.info('[DEMO] payload que se enviaría al backend:', copy);
       var d = new Date();

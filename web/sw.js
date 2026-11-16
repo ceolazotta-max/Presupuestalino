@@ -1,10 +1,11 @@
-var CACHE = 'presupuestalino-v1';
+var CACHE = 'presupuestalino-v2';
 var ASSETS = [
   './',
   './index.html',
   './css/styles.css',
   './js/config.js',
   './js/validate.js',
+  './js/quote.js',
   './js/mock.js',
   './js/api.js',
   './js/app.js',

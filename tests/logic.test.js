@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const L = require('../apps-script/Logic.js');
 const { validateRxValue } = require('../web/js/validate.js');
 const Mock = require('../web/js/mock.js');
+const Q = require('../web/js/quote.js');
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const dec = (s) => Buffer.from(s, 'base64url').toString('utf8');
@@ -132,4 +133,108 @@ test('Mock.handle simula ocr y save', async () => {
   assert.equal(save.ok, true);
   assert.equal(save.demo, true);
   assert.match(save.fotoNombre, /^\d{4}-\d{2}-\d{2}_\d{6}_Maria-Gomez\.jpg$/);
+
+  const cat = await Mock.handle({ action: 'catalog' });
+  assert.equal(cat.ok, true);
+  assert.equal(cat.items.length, Q.SEED_CATALOG.length);
+});
+
+test('Quote.normalizeEyeRx transpone cilindro positivo a negativo', () => {
+  const tr = Q.normalizeEyeRx('-1.00', '+2.50', '90', '', '');
+  assert.equal(tr.transposed, true);
+  assert.equal(tr.esf_t, 1.5);
+  assert.equal(tr.cil_t, -2.5);
+  assert.equal(tr.eje_t, 180);
+
+  const neg = Q.normalizeEyeRx('-2.25', '-0.75', '180', '', '');
+  assert.equal(neg.transposed, false);
+  assert.equal(neg.esf_t, -2.25);
+  assert.equal(neg.cil_t, -0.75);
+});
+
+test('Quote evalúa Stock vs Laboratorio por medio par independiente', () => {
+  const od = Q.normalizeEyeRx('-1.50', '-0.50', '90', '', '');
+  const oi = Q.normalizeEyeRx('-1.50', '-2.75', '90', '', '');
+  assert.equal(Q.canEyeUseStock(od, 'lejos').ok, true);
+  assert.equal(Q.canEyeUseStock(oi, 'lejos').ok, false);
+
+  const stk = Q.SEED_CATALOG.find((p) => p.codigo === 'STK-150-AR');
+  const lab = Q.SEED_CATALOG.find((p) => p.codigo === 'LAB-150-AR');
+  assert.equal(Q.checkProductForEye(stk, od, 'lejos').allowed, true);
+  assert.equal(Q.checkProductForEye(stk, oi, 'lejos').allowed, false);
+  assert.equal(Q.checkProductForEye(lab, oi, 'lejos').allowed, true);
+
+  // Suma meridiana (-7.00 + -2.00 = -9.00) supera sumaMax 8 de STK-150-AR
+  const highSum = Q.normalizeEyeRx('-7.00', '-2.00', '180', '', '');
+  assert.equal(Q.checkProductForEye(stk, highSum, 'lejos').allowed, false);
+
+  // Prisma y Multifocal bloquean Stock
+  assert.equal(Q.canEyeUseStock(Q.normalizeEyeRx('-1.00', '0', '0', '', '2 BI'), 'lejos').ok, false);
+  assert.equal(Q.canEyeUseStock(od, 'multifocal').ok, false);
+});
+
+test('Quote.validateQuote detecta bloqueos duros y advertencias inteligentes', () => {
+  const rx = {
+    lejos_od_esfera: '-5.00', lejos_od_cilindro: '-0.50', lejos_od_eje: '90',
+    lejos_oi_esfera: '-1.50', lejos_oi_cilindro: '-2.75', lejos_oi_eje: '180',
+    adicion: '', dip: '', prisma: ''
+  };
+  const badState = {
+    uso: 'lejos',
+    eyesMode: 'both',
+    od: { mode: 'catalog', codigo: 'STK-150-BL', price: 18000 },
+    oi: { mode: 'catalog', codigo: 'STK-150-AR', price: 26000 },
+    frame: { mode: 'nuevo', rimType: 'aire', price: 30000 }
+  };
+  const v1 = Q.validateQuote(rx, badState, Q.SEED_CATALOG);
+  assert.ok(v1.errors.some((e) => e.includes('OI:') && e.includes('Stock')));
+  assert.ok(v1.warnings.some((w) => w.includes('tratamiento')));
+  assert.ok(v1.warnings.some((w) => w.includes('graduación alta')));
+  assert.ok(v1.warnings.some((w) => w.includes('al aire')));
+  assert.ok(v1.warnings.some((w) => w.includes('DIP')));
+
+  // Multifocal sin Adición ni Cerca → error bloqueante
+  const vMulti = Q.validateQuote(rx, { ...badState, uso: 'multifocal' }, Q.SEED_CATALOG);
+  assert.ok(vMulti.errors.some((e) => e.includes('Adición')));
+});
+
+test('Quote.calculateTotals calcula medios pares, descuento, efectivo y Plan Cristalino', () => {
+  const t = Q.calculateTotals({
+    eyesMode: 'both',
+    od: { price: 26000 },
+    oi: { price: 42000 },
+    frame: { mode: 'nuevo', price: 32000 },
+    discount: 10000,
+    deposit: 20000
+  });
+  assert.equal(t.subtotal, 100000);
+  assert.equal(t.listTotal, 90000);
+  assert.equal(t.balanceBase, 70000);
+  assert.equal(t.cashTotal, 63000);
+  assert.equal(t.transferTotal, 70000);
+  assert.equal(t.cristalinoOptions[0].cuotas, 2);
+  assert.equal(t.cristalinoOptions[0].total, 78400);
+  assert.equal(t.cristalinoOptions[0].cuotaMensual, 39200);
+
+  // Medio par único (Solo OD) ignora precio OI
+  const soloOd = Q.calculateTotals({
+    eyesMode: 'od',
+    od: { price: 26000 },
+    oi: { price: 42000 },
+    frame: { mode: 'propio', price: 50000 }
+  });
+  assert.equal(soloOd.listTotal, 26000);
+});
+
+test('Logic catálogo sincronizado con Quote.SEED_CATALOG', () => {
+  assert.deepEqual(L.SEED_CATALOG_ITEMS, Q.SEED_CATALOG);
+  const rows = [L.CATALOG_HEADERS, ...L.SEED_CATALOG_ITEMS.map(L.catalogItemToRow)];
+  assert.equal(L.parseCatalogRows(rows).length, Q.SEED_CATALOG.length);
+
+  const manual = L.sanitizeCatalogItem({
+    nombre: 'Multifocal 1.60 AR', tipo: 'Stock', diseno: 'Multifocal',
+    indice: '1.60', tratamiento: 'AR', precioMedioPar: 85000
+  }, 'T1');
+  assert.equal(manual.tipo, 'Laboratorio'); // Multifocal fuerza Laboratorio
+  assert.equal(manual.precioMedioPar, 85000);
 });

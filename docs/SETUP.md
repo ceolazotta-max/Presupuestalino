@@ -16,9 +16,10 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 
 1. Creá una carpeta en **Google Drive** corporativo para guardar las fotos de recetas.
    - Copiá su ID de la URL: `https://drive.google.com/drive/folders/<DRIVE_FOLDER_ID>`.
-2. Abrí el **Google Sheet** existente (o creá uno nuevo para pruebas).
+2. Abrí el **Google Sheet** existente (o creá uno nuevo en blanco en Google Drive).
    - Copiá su ID de la URL: `https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`.
    - Dejá ambos recursos compartidos solo con el dueño del script y el equipo autorizado.
+   - No hace falta armar columnas a mano: al ejecutar `setupCheck` (paso 5.4), el script crea automáticamente la pestaña **`Catalogo`** con 13 cristales base (para que completes precios reales en `Precio_Medio_Par`) y al guardar la primera receta crea los encabezados de la hoja principal.
 
 ---
 

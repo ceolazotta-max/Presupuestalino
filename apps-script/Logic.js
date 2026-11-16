@@ -180,12 +180,106 @@ function sanitizeExtraFields(list) {
   }).filter(function (f) { return f.label; });
 }
 
+var CATALOG_HEADERS = [
+  'Codigo', 'Nombre', 'Tipo', 'Diseno', 'Indice', 'Tratamiento',
+  'Esf_Min', 'Esf_Max', 'Cil_Max', 'Suma_Max', 'Precio_Medio_Par', 'Activo'
+];
+
+var SEED_CATALOG_ITEMS = [
+  { codigo: 'STK-150-BL', nombre: 'Orgánico 1.50 Blanco', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Blanco', esfMin: -6, esfMax: 4, cilMax: 2, sumaMax: 6, precioMedioPar: 18000, activo: 'Sí' },
+  { codigo: 'STK-150-AR', nombre: 'Orgánico 1.50 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 26000, activo: 'Sí' },
+  { codigo: 'STK-156-BC', nombre: 'Orgánico 1.56 Blue Cut', tipo: 'Stock', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Blue Cut', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 34000, activo: 'Sí' },
+  { codigo: 'STK-156-FC', nombre: 'Orgánico 1.56 Fotocromático', tipo: 'Stock', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Fotocromático', esfMin: -6, esfMax: 4, cilMax: 2, sumaMax: 6, precioMedioPar: 46000, activo: 'Sí' },
+  { codigo: 'STK-159-AR', nombre: 'Policarbonato 1.59 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 38000, activo: 'Sí' },
+  { codigo: 'STK-167-AR', nombre: 'Alto Índice 1.67 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 6, cilMax: 2, sumaMax: 10, precioMedioPar: 62000, activo: 'Sí' },
+  { codigo: 'LAB-150-AR', nombre: 'Tallado Orgánico 1.50 Antirreflejo', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -14, esfMax: 12, cilMax: 6, sumaMax: 16, precioMedioPar: 42000, activo: 'Sí' },
+  { codigo: 'LAB-159-BC', nombre: 'Tallado Policarbonato 1.59 Blue Cut', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -16, esfMax: 12, cilMax: 6, sumaMax: 18, precioMedioPar: 58000, activo: 'Sí' },
+  { codigo: 'LAB-167-AR', nombre: 'Tallado Alto Índice 1.67 Antirreflejo', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -20, esfMax: 14, cilMax: 6, sumaMax: 22, precioMedioPar: 86000, activo: 'Sí' },
+  { codigo: 'LAB-BIF-150', nombre: 'Bifocal Flap Top 1.50 Antirreflejo', tipo: 'Laboratorio', diseno: 'Bifocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 8, cilMax: 4, sumaMax: 12, precioMedioPar: 52000, activo: 'Sí' },
+  { codigo: 'LAB-MUL-150', nombre: 'Multifocal Digital 1.50 Antirreflejo', tipo: 'Laboratorio', diseno: 'Multifocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 8, cilMax: 4, sumaMax: 12, precioMedioPar: 78000, activo: 'Sí' },
+  { codigo: 'LAB-MUL-159', nombre: 'Multifocal Digital Poly 1.59 Blue Cut', tipo: 'Laboratorio', diseno: 'Multifocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -12, esfMax: 8, cilMax: 5, sumaMax: 14, precioMedioPar: 105000, activo: 'Sí' },
+  { codigo: 'LAB-OCU-156', nombre: 'Ocupacional 1.56 Blue Cut', tipo: 'Laboratorio', diseno: 'Ocupacional', indice: '1.56', tratamiento: 'Blue Cut', esfMin: -8, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 72000, activo: 'Sí' }
+];
+
+function numOrDefault_(v, def) {
+  var n = Number(String(v === undefined || v === null ? '' : v).replace(',', '.'));
+  return isFinite(n) && String(v).trim() !== '' ? n : def;
+}
+
+/** Convierte filas de la pestaña Catalogo (fila 1 = encabezados) en objetos de producto activos. */
+function parseCatalogRows(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return [];
+  var headers = rows[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
+  var idx = function (name) { return headers.indexOf(name.toLowerCase()); };
+  var items = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i] || [];
+    var nombre = String(r[idx('Nombre')] || '').trim();
+    if (!nombre) continue;
+    var activo = String(r[idx('Activo')] || 'Sí').trim().toLowerCase();
+    if (activo === 'no' || activo === 'false' || activo === '0') continue;
+    var tipo = String(r[idx('Tipo')] || 'Stock').trim();
+    items.push({
+      codigo: String(r[idx('Codigo')] || ('CAT-' + i)).trim(),
+      nombre: nombre,
+      tipo: /^lab/i.test(tipo) ? 'Laboratorio' : 'Stock',
+      diseno: String(r[idx('Diseno')] || 'Monofocal').trim(),
+      indice: String(r[idx('Indice')] || '1.50').trim(),
+      tratamiento: String(r[idx('Tratamiento')] || '').trim(),
+      esfMin: numOrDefault_(r[idx('Esf_Min')], -10),
+      esfMax: numOrDefault_(r[idx('Esf_Max')], 6),
+      cilMax: Math.abs(numOrDefault_(r[idx('Cil_Max')], 2)),
+      sumaMax: Math.abs(numOrDefault_(r[idx('Suma_Max')], 10)),
+      precioMedioPar: Math.max(0, numOrDefault_(r[idx('Precio_Medio_Par')], 0)),
+      activo: 'Sí'
+    });
+  }
+  return items;
+}
+
+/** Valida y limpia un cristal cargado manualmente para guardarlo en Catalogo. */
+function sanitizeCatalogItem(item, stamp) {
+  if (!item || typeof item !== 'object') return null;
+  var nombre = sanitizeCell(item.nombre, 120);
+  if (!nombre) return null;
+  var tipo = /^lab/i.test(String(item.tipo || '')) ? 'Laboratorio' : 'Stock';
+  var diseno = ['Monofocal', 'Bifocal', 'Multifocal', 'Ocupacional'].indexOf(item.diseno) >= 0 ? item.diseno : 'Monofocal';
+  if (diseno !== 'Monofocal') tipo = 'Laboratorio';
+  var isLab = tipo === 'Laboratorio';
+  var precio = Math.max(0, Math.round(Number(item.precioMedioPar || item.precio) || 0));
+  var code = sanitizeCell(item.codigo, 30) || ('MAN-' + (stamp || Date.now().toString(36).toUpperCase()));
+  return {
+    codigo: code,
+    nombre: nombre,
+    tipo: tipo,
+    diseno: diseno,
+    indice: sanitizeCell(item.indice || '1.50', 12),
+    tratamiento: sanitizeCell(item.tratamiento || '', 40),
+    esfMin: isLab ? -20 : -10,
+    esfMax: isLab ? 14 : 6,
+    cilMax: isLab ? 6 : 2,
+    sumaMax: isLab ? 22 : 10,
+    precioMedioPar: precio,
+    activo: 'Sí'
+  };
+}
+
+function catalogItemToRow(it) {
+  return [
+    it.codigo, it.nombre, it.tipo, it.diseno, it.indice, it.tratamiento,
+    it.esfMin, it.esfMax, it.cilMax, it.sumaMax, it.precioMedioPar, it.activo || 'Sí'
+  ];
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRxFields: buildRxFields, buildRxSchema: buildRxSchema, normalizeName: normalizeName,
     buildPhotoFileName: buildPhotoFileName, decodeJwtPayload: decodeJwtPayload,
     precheckClaims: precheckClaims, parseDataUrl: parseDataUrl, sanitizeCell: sanitizeCell,
     buildRow: buildRow, isValidUuid: isValidUuid, parseCsvList: parseCsvList, rateKey: rateKey,
-    sanitizeExtraFields: sanitizeExtraFields, MAX_IMAGE_BYTES: MAX_IMAGE_BYTES
+    sanitizeExtraFields: sanitizeExtraFields, MAX_IMAGE_BYTES: MAX_IMAGE_BYTES,
+    CATALOG_HEADERS: CATALOG_HEADERS, SEED_CATALOG_ITEMS: SEED_CATALOG_ITEMS,
+    parseCatalogRows: parseCatalogRows, sanitizeCatalogItem: sanitizeCatalogItem,
+    catalogItemToRow: catalogItemToRow
   };
 }

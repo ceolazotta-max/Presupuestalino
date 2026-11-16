@@ -12,7 +12,8 @@ App web (PWA) que permite al personal de la óptica:
 2. Extraer automáticamente sus datos (OCR + interpretación).
 3. Revisar y corregir lo extraído.
 4. Completar datos adicionales.
-5. Guardar foto en Google Drive y datos en una fila nueva de un Google Sheets existente.
+5. Presupuestar cristales por medio par (`OD` / `OI`), armazón y medios de pago (Paso 4), con ficha imprimible/PDF e imagen para WhatsApp.
+6. Guardar foto en Google Drive y datos en una fila nueva de un Google Sheets existente (más alta al catálogo si corresponde).
 
 ---
 
@@ -100,6 +101,14 @@ flowchart TD
 - `manifest.json` + service worker básico → instalable en home screen / escritorio.
 - Sin modo offline en v1 (ver §9).
 
+### FR-08 Presupuestador (Paso 4)
+- Catálogo cargado desde pestaña `Catalogo` del Sheet (semilla automática si no existe) + modo **Carga manual** con opción de guardado al catálogo.
+- Evaluación y selección independiente por **medio par (`OD` / `OI`)** con opción `Ambos ojos`, `Solo OD` o `Solo OI`, previa transposición automática a cilindro negativo.
+- Bloqueo duro: no permite elegir productos `Stock` cuando la graduación del ojo exige `Laboratorio`.
+- Validaciones inteligentes (asimetría de índice/tratamiento entre ojos, índice 1.50 en graduaciones altas o armazón ranurado/al aire, falta de DIP, coherencia de diseño vs Adición/Cerca).
+- Armazón (sin armazón / propio / nuevo), Descuento/OS, Seña y medios de pago: Efectivo (`-10%`), Transferencia, Tarjeta (cuotas) y **Plan Cristalino** (cuotas, interés por mes y total financiado).
+- Entrega doble: vista imprimible / PDF (`@media print`) e imagen PNG compartible/descargable para WhatsApp.
+
 ---
 
 ## 5. Arquitectura
@@ -131,8 +140,9 @@ flowchart LR
 
 | action | Entrada | Salida |
 |---|---|---|
+| `catalog` | idToken | Lista de cristales de pestaña `Catalogo` |
 | `ocr` | idToken, imagen base64 | JSON estructurado (FR-03) |
-| `save` | idToken, uuid, imagen base64, campos corregidos, extra, datos adicionales | `{ok, fotoUrl, fila}` |
+| `save` | idToken, uuid, imagen base64, campos corregidos, extra, datos adicionales, presupuesto, nuevos ítems catálogo | `{ok, fotoUrl, fila}` |
 
 ### Seguridad
 - Web App desplegada: *Ejecutar como: yo (cuenta de servicio/owner)*, *Acceso: cualquiera*.
@@ -196,7 +206,6 @@ flowchart LR
 - Modo offline / cola de envíos sin conexión.
 - Edición o borrado de filas desde la app.
 - Búsqueda / listado de recetas guardadas.
-- Generación de presupuestos (posible v2, dado el nombre del proyecto).
 - Integración con otros sistemas.
 
 ---

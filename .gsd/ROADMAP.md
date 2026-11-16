@@ -13,5 +13,5 @@
 | Wave | Tareas | Depende | Estado |
 |---|---|---|---|
 | 1 | Lógica pura compartida (`apps-script/Logic.gs`) + tests Node | — | ✅ |
-| 2 | Backend `Code.gs` (auth, rate limit, OCR, save) · Frontend PWA (`web/`) con modo MOCK | Wave 1 | ✅ |
-| 3 | Verificación: tests · `docs/SETUP.md` · `README.md` (pruebas visuales en modo MOCK al desplegar/servir) | Wave 2 | ✅ |
+| 2 | Backend `Code.gs` (auth, rate limit, OCR, catálogo, save) · Frontend PWA (`web/`) con modo MOCK y Paso 4 Presupuestador | Wave 1 | ✅ |
+| 3 | Verificación: tests · `docs/SETUP.md` · `README.md` | Wave 2 | ✅ |

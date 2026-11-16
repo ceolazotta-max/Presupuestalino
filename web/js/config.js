@@ -50,7 +50,25 @@ window.APP_CONFIG = {
 
   // Compresión de imagen en el cliente.
   MAX_IMAGE_SIDE: 2000,
-  JPEG_QUALITY: 0.85
+  JPEG_QUALITY: 0.85,
+
+  // Presupuestador (Paso 4).
+  OPTICA_NAME: 'Óptica Cristalino',
+  QUOTE_VALIDITY_DAYS: 7,
+  PAYMENT_CONFIG: {
+    cashDiscountPct: 10,
+    transferSurchargePct: 0,
+    cardPlans: [
+      { cuotas: 1, surchargePct: 0 },
+      { cuotas: 3, surchargePct: 15 },
+      { cuotas: 6, surchargePct: 30 }
+    ],
+    cristalinoPlans: [
+      { cuotas: 2, surchargePct: 12 },
+      { cuotas: 3, surchargePct: 20 },
+      { cuotas: 6, surchargePct: 42 }
+    ]
+  }
 };
 
 // Modo demo: sin backend configurado o con ?demo en la URL.

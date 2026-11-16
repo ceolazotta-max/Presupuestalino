@@ -26,6 +26,7 @@
     <li data-step="capture"><span>1</span>Foto</li>
     <li data-step="review"><span>2</span>Revisar</li>
     <li data-step="extra"><span>3</span>Datos</li>
+    <li data-step="quote"><span>4</span>Presupuesto</li>
     <li data-step="done"><span>✓</span>Listo</li>
   </ol>
 
@@ -107,20 +108,167 @@
         <div id="extra-fields"></div>
         <div class="actions">
           <button id="btn-back-review" class="btn ghost" type="button">← Revisar</button>
-          <button id="btn-save" class="btn primary" type="submit">Guardar</button>
+          <button id="btn-to-quote" class="btn primary" type="submit">Armar presupuesto →</button>
         </div>
         <p id="extra-error" class="error" role="alert"></p>
       </form>
+    </section>
+
+    <!-- PRESUPUESTO -->
+    <section id="screen-quote" class="screen" hidden>
+      <div class="quote-layout">
+        <div class="card">
+          <h2>Presupuestador de anteojos</h2>
+          <div class="rx-list">
+            <label class="field">
+              <span>Uso del anteojo</span>
+              <select id="q-uso">
+                <option value="lejos">Lejos</option>
+                <option value="cerca">Cerca</option>
+                <option value="multifocal">Multifocal</option>
+                <option value="bifocal">Bifocal</option>
+                <option value="ocupacional">Ocupacional</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Ojos a cotizar</span>
+              <select id="q-eyes">
+                <option value="both">Ambos ojos (OD + OI)</option>
+                <option value="od">Solo OD (½ par derecho)</option>
+                <option value="oi">Solo OI (½ par izquierdo)</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="q-eyes-grid" class="eyes-grid">
+            <div id="q-card-od" class="eye-card">
+              <div class="eye-head">
+                <h3>½ Par OD (Ojo Derecho)</h3>
+                <span id="q-badge-od" class="badge"></span>
+              </div>
+              <p id="q-rx-od" class="rx-summary"></p>
+              <label class="field">
+                <span>Cristal OD</span>
+                <select id="q-prod-od"></select>
+              </label>
+              <div id="q-manual-od" class="manual-box" hidden>
+                <label class="field"><span>Nombre / Descripción *</span><input id="q-man-nombre-od" type="text" maxlength="120" placeholder="Ej. Orgánico 1.60 Blue Cut"></label>
+                <div class="rx-list">
+                  <label class="field"><span>Tipo</span><select id="q-man-tipo-od"><option value="Stock">Stock</option><option value="Laboratorio">Laboratorio</option></select></label>
+                  <label class="field"><span>Diseño</span><select id="q-man-diseno-od"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>
+                  <label class="field"><span>Índice</span><select id="q-man-indice-od"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>
+                  <label class="field"><span>Tratamiento</span><input id="q-man-trat-od" type="text" maxlength="40" placeholder="Blanco / AR / Blue Cut / Foto"></label>
+                </div>
+                <label class="check-field"><input id="q-man-save-od" type="checkbox"> <span>Guardar este cristal en el Catálogo para próximas veces</span></label>
+              </div>
+              <label class="field">
+                <span>Precio ½ par OD ($)</span>
+                <input id="q-price-od" type="number" min="0" step="100" inputmode="numeric">
+              </label>
+            </div>
+
+            <div id="q-card-oi" class="eye-card">
+              <div class="eye-head">
+                <h3>½ Par OI (Ojo Izquierdo)</h3>
+                <span id="q-badge-oi" class="badge"></span>
+              </div>
+              <p id="q-rx-oi" class="rx-summary"></p>
+              <label class="field">
+                <span>Cristal OI</span>
+                <select id="q-prod-oi"></select>
+              </label>
+              <div id="q-manual-oi" class="manual-box" hidden>
+                <label class="field"><span>Nombre / Descripción *</span><input id="q-man-nombre-oi" type="text" maxlength="120" placeholder="Ej. Tallado 1.67 Antirreflejo"></label>
+                <div class="rx-list">
+                  <label class="field"><span>Tipo</span><select id="q-man-tipo-oi"><option value="Stock">Stock</option><option value="Laboratorio">Laboratorio</option></select></label>
+                  <label class="field"><span>Diseño</span><select id="q-man-diseno-oi"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>
+                  <label class="field"><span>Índice</span><select id="q-man-indice-oi"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>
+                  <label class="field"><span>Tratamiento</span><input id="q-man-trat-oi" type="text" maxlength="40" placeholder="Blanco / AR / Blue Cut / Foto"></label>
+                </div>
+                <label class="check-field"><input id="q-man-save-oi" type="checkbox"> <span>Guardar este cristal en el Catálogo para próximas veces</span></label>
+              </div>
+              <label class="field">
+                <span>Precio ½ par OI ($)</span>
+                <input id="q-price-oi" type="number" min="0" step="100" inputmode="numeric">
+              </label>
+            </div>
+          </div>
+
+          <h3>Armazón, descuento y seña</h3>
+          <div class="rx-list">
+            <label class="field">
+              <span>Armazón</span>
+              <select id="q-frame-mode">
+                <option value="none">Sin armazón / Solo cristales</option>
+                <option value="propio">Armazón propio del cliente</option>
+                <option value="nuevo_completo">Armazón nuevo — Aro completo</option>
+                <option value="nuevo_semi">Armazón nuevo — Semi al aire (Tanza)</option>
+                <option value="nuevo_aire">Armazón nuevo — Ranurado / Al aire</option>
+              </select>
+            </label>
+            <label id="q-frame-rim-wrap" class="field" hidden>
+              <span>Tipo de aro (propio)</span>
+              <select id="q-frame-rim">
+                <option value="completo">Aro completo</option>
+                <option value="semi">Semi al aire (Tanza)</option>
+                <option value="aire">Ranurado / Al aire</option>
+              </select>
+            </label>
+            <label id="q-frame-detail-wrap" class="field" hidden>
+              <span>Modelo / Detalle armazón</span>
+              <input id="q-frame-detail" type="text" maxlength="100" placeholder="Ej. Vulk negro acetato">
+            </label>
+            <label id="q-frame-price-wrap" class="field" hidden>
+              <span>Precio armazón ($)</span>
+              <input id="q-frame-price" type="number" min="0" step="100" inputmode="numeric" value="0">
+            </label>
+            <label class="field">
+              <span>Descuento / Obra Social ($)</span>
+              <input id="q-discount" type="number" min="0" step="100" inputmode="numeric" value="0">
+            </label>
+            <label class="field">
+              <span>Detalle descuento / OS</span>
+              <input id="q-discount-note" type="text" maxlength="60" placeholder="Ej. OSDE 310 / Promo">
+            </label>
+            <label class="field">
+              <span>Seña ($)</span>
+              <input id="q-deposit" type="number" min="0" step="100" inputmode="numeric" value="0">
+            </label>
+          </div>
+
+          <div id="quote-alerts" class="quote-alerts" aria-live="polite"></div>
+
+          <div class="actions">
+            <button id="btn-back-extra" class="btn ghost" type="button">← Datos</button>
+            <button id="btn-save" class="btn primary" type="button">Guardar receta y presupuesto</button>
+          </div>
+          <p id="quote-error" class="error" role="alert"></p>
+        </div>
+
+        <div class="quote-preview-col">
+          <article id="quote-sheet" class="card quote-sheet" aria-label="Ficha técnica y presupuesto"></article>
+          <div class="actions no-print">
+            <button id="btn-print-quote" class="btn ghost" type="button">🖨️ Imprimir / PDF</button>
+            <button id="btn-share-quote" class="btn primary" type="button">📲 Imagen para WhatsApp</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- LISTO -->
     <section id="screen-done" class="screen" hidden>
       <div class="card narrow center">
         <div class="success-icon" aria-hidden="true">✓</div>
-        <h2>Receta guardada</h2>
+        <h2>Receta y presupuesto guardados</h2>
         <p id="done-detail" class="muted"></p>
         <p><a id="done-link" href="#" target="_blank" rel="noopener" hidden>Ver foto en Drive ↗</a></p>
-        <button id="btn-new" class="btn primary big" type="button">Nueva receta</button>
+        <div class="actions">
+          <button id="btn-done-print" class="btn ghost" type="button">🖨️ Imprimir / PDF</button>
+          <button id="btn-done-share" class="btn ghost" type="button">📲 Imagen para WhatsApp</button>
+        </div>
+        <div class="actions">
+          <button id="btn-new" class="btn primary big" type="button">Nueva receta</button>
+        </div>
       </div>
     </section>
   </main>
@@ -148,6 +296,7 @@
 
   <script src="js/config.js"></script>
   <script src="js/validate.js"></script>
+  <script src="js/quote.js"></script>
   <script src="js/mock.js"></script>
   <script src="js/api.js"></script>
   <script src="js/app.js"></script>
