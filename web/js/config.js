@@ -19,31 +19,35 @@ window.APP_CONFIG = {
   // Formulario de datos adicionales. type: text | tel | email | textarea | select
   EXTRA_FIELDS: [
     { key: 'nombre', label: 'Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
-    { key: 'telefono', label: 'Teléfono', type: 'tel', autocomplete: 'tel' },
-    { key: 'email', label: 'Email cliente', type: 'email', autocomplete: 'email' },
+    { key: 'telefono', label: 'Teléfono', type: 'tel', required: true, autocomplete: 'tel' },
+    { key: 'email', label: 'Email cliente', type: 'email', required: true, autocomplete: 'email' },
     {
       key: 'origen',
       label: '¿De dónde nos conoce?',
       type: 'select',
+      required: true,
       options: ['Ya era cliente', 'Recomendación', 'Redes sociales', 'Calle']
     },
     {
       key: 'origen_quien',
       label: 'Quién',
       type: 'text',
+      required: true,
       showWhen: { field: 'origen', value: 'Recomendación' }
     },
     {
       key: 'origen_cual',
       label: 'Cuál',
       type: 'text',
+      required: true,
       showWhen: { field: 'origen', value: 'Redes sociales' }
     },
-    { key: 'notas', label: 'Notas', type: 'textarea' },
+    { key: 'notas', label: 'Notas', type: 'textarea', required: true },
     {
       key: 'vendedor',
       label: 'Vendedor',
       type: 'select',
+      required: true,
       options: ['Gabriel', 'Micaela', 'Yamila']
     }
   ],

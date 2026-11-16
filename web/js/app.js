@@ -555,6 +555,10 @@
   async function toQuote(ev) {
     ev.preventDefault();
     var form = $('#extra-form');
+    C.EXTRA_FIELDS.forEach(function (f) {
+      var el = form.elements[f.key];
+      if (el && !el.disabled && typeof el.value === 'string') el.value = el.value.trim();
+    });
     if (!form.reportValidity()) return;
     setError('#extra-error', '');
     await ensureCatalog();
