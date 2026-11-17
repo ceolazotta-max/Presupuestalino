@@ -66,21 +66,30 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
    - Renombrá/editá `Code.gs` y pegá el contenido de `apps-script/Code.js`.
    - Creá un archivo de secuencia de comandos llamado `Logic` (`Logic.gs`) y pegá `apps-script/Logic.js`.
    - En **Configuración del proyecto** marcá *Mostrar el archivo de manifiesto "appsscript.json" en el editor* y pegá `apps-script/appsscript.json`.
-3. En **Configuración del proyecto → Propiedades de la secuencia de comandos (Script Properties)** agregá:
+3. En **Configuración del proyecto → Propiedades de las secuencias de comandos**, hacé clic en **Agregar propiedad de secuencia de comandos** para cada fila completando **Propiedad** y **Valor** *(Apps Script no deja guardar filas vacías: si una propiedad no la usás, directamente no la agregues)*:
 
-| Propiedad | Obligatoria | Descripción / Ejemplo |
-|---|---|---|
-| `GEMINI_API_KEY` | Sí | Clave de Gemini API |
-| `OAUTH_CLIENT_ID` | Sí | Client ID web de Google Cloud |
-| `ALLOWED_DOMAIN` | Si usás Workspace | Dominio corporativo, ej. `mioptica.com.ar`. **Dejar vacío si usás cuentas `@gmail.com`** |
-| `SHEET_ID` | Sí | ID del Google Sheet |
-| `DRIVE_FOLDER_ID` | Sí | ID de la carpeta de Drive |
-| `ALLOWED_EMAILS` | Sí con `@gmail.com` | Lista separada por comas de emails autorizados (ej. `ceo.lazotta@gmail.com,vendedor@gmail.com`) |
-| `SHEET_NAME` | Opcional | Nombre de la pestaña (default: primera hoja) |
-| `GEMINI_MODEL` | Opcional | Default: `gemini-flash-latest` |
-| `RATE_OCR_PER_HOUR` | Opcional | Default: `30` |
-| `RATE_SAVE_PER_HOUR` | Opcional | Default: `30` |
-| `TIMEZONE` | Opcional | Default: `America/Argentina/Buenos_Aires` |
+   **Obligatorias:**
+
+   | Propiedad | Valor |
+   |---|---|
+   | `GEMINI_API_KEY` | Tu clave de Gemini API (Paso 4) |
+   | `OAUTH_CLIENT_ID` | Tu Client ID web de Google Cloud (Paso 3) |
+   | `SHEET_ID` | ID del Google Sheet (Paso 2) |
+   | `DRIVE_FOLDER_ID` | ID de la carpeta de Drive (Paso 2) |
+   | `ALLOWED_EMAILS` | Emails autorizados separados por coma (ej. `ceo.lazotta@gmail.com,vendedor@gmail.com`) — *obligatorio con `@gmail.com`* |
+   | `ALLOWED_DOMAIN` | *(Solo si usás Google Workspace propio, ej. `mioptica.com.ar`. **Con `@gmail.com` NO la agregues.**)* |
+
+   **Opcionales (no hace falta cargarlas; ya traen valor por defecto):**
+
+   | Propiedad | Valor por defecto si no se agrega |
+   |---|---|
+   | `SHEET_NAME` | Primera hoja del Sheet |
+   | `GEMINI_MODEL` | `gemini-flash-latest` |
+   | `RATE_OCR_PER_HOUR` | `30` |
+   | `RATE_SAVE_PER_HOUR` | `30` |
+   | `TIMEZONE` | `America/Argentina/Buenos_Aires` |
+
+   Al terminar de cargar las obligatorias, tocá **Guardar las propiedades de las secuencias de comandos**.
 
 4. En el editor seleccioná la función `setupCheck` y tocá **Ejecutar**. Aceptá los permisos de Drive, Sheets y URL Fetch, y verificá en los registros que todo figure `OK` / `HTTP 200`.
 5. Tocá **Implementar → Nueva implementación**:
