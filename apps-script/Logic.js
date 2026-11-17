@@ -111,10 +111,13 @@ function precheckClaims(c, cfg, nowSec) {
   if (!(c.email_verified === true || c.email_verified === 'true')) return fail(401, 'Email no verificado');
   var email = String(c.email || '').toLowerCase();
   if (!email) return fail(401, 'Sin email');
-  if (cfg.domain && String(c.hd || '').toLowerCase() !== cfg.domain.toLowerCase()) {
+  var hasDomain = Boolean(cfg.domain);
+  var hasAllowlist = Boolean(cfg.allowedEmails && cfg.allowedEmails.length);
+  if (!hasDomain && !hasAllowlist) return fail(500, 'Sin filtro de acceso configurado');
+  if (hasDomain && String(c.hd || '').toLowerCase() !== cfg.domain.toLowerCase()) {
     return fail(403, 'Cuenta fuera del dominio corporativo');
   }
-  if (cfg.allowedEmails && cfg.allowedEmails.length && cfg.allowedEmails.indexOf(email) < 0) {
+  if (hasAllowlist && cfg.allowedEmails.indexOf(email) < 0) {
     return fail(403, 'Usuario no autorizado');
   }
   return { ok: true, email: email };

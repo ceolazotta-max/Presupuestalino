@@ -50,6 +50,13 @@ test('precheckClaims rechaza casos inválidos', () => {
   for (const [c, code] of cases) assert.equal(L.precheckClaims(c, cfg, now).code, code);
   const allow = { ...cfg, allowedEmails: ['beto@optica.com.ar'] };
   assert.equal(L.precheckClaims(good, allow, now).code, 403);
+
+  const gmailCfg = { clientId: cfg.clientId, domain: '', allowedEmails: ['ceo.lazotta@gmail.com'] };
+  const gmailOk = L.precheckClaims({ ...good, hd: undefined, email: 'ceo.lazotta@gmail.com' }, gmailCfg, now);
+  assert.equal(gmailOk.ok, true);
+  assert.equal(gmailOk.email, 'ceo.lazotta@gmail.com');
+  assert.equal(L.precheckClaims({ ...good, hd: undefined, email: 'intruso@gmail.com' }, gmailCfg, now).code, 403);
+  assert.equal(L.precheckClaims(good, { clientId: cfg.clientId, domain: '', allowedEmails: [] }, now).code, 500);
 });
 
 test('parseDataUrl valida tipo y tamaño', () => {

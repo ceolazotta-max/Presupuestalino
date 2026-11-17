@@ -23,13 +23,14 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 
 ---
 
-## 3. Configurar Google Cloud y OAuth Interno
+## 3. Configurar Google Cloud y OAuth
 
-1. Ingresá a [Google Cloud Console](https://console.cloud.google.com/) con la cuenta corporativa y creá o elegí un proyecto.
-2. En **APIs y servicios → Pantalla de consentimiento de OAuth**:
-   - Elegí tipo de usuario **Interno (Internal)**. Esto bloquea el login para cuentas `@gmail.com` o externas antes de que lleguen a la app.
+1. Ingresá a [Google Cloud Console](https://console.cloud.google.com/) con tu cuenta de Google y creá o elegí un proyecto.
+2. En **Google Auth Platform → Público** (o *Pantalla de consentimiento de OAuth*):
+   - **Si usás Google Workspace con dominio propio:** elegí **Interno (Internal)**. Esto limita el acceso solo a cuentas de tu dominio.
+   - **Si usás cuentas `@gmail.com` comunes (ej. tu captura actual):** Google Cloud muestra **Usuarios externos** en estado **"Prueba"**. Dejalo en **Prueba** (no lo publiques) y agregá las cuentas autorizadas en **Usuarios de prueba → `+ Add users`** (ej. los emails de tus vendedores). Así Google bloquea cualquier otra cuenta antes de emitir token.
    - Completá nombre de la app y emails de contacto.
-3. En **APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth**:
+3. En **Clientes / Credenciales → Crear cliente → ID de cliente de OAuth**:
    - Tipo de aplicación: **Aplicación web**.
    - **Orígenes de JavaScript autorizados**:
      - `https://<usuario-u-org>.github.io` (sin barra final ni ruta del repo)
@@ -62,10 +63,10 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 |---|---|---|
 | `GEMINI_API_KEY` | Sí | Clave de Gemini API |
 | `OAUTH_CLIENT_ID` | Sí | Client ID web de Google Cloud |
-| `ALLOWED_DOMAIN` | Sí | Dominio Workspace, ej. `mioptica.com.ar` |
+| `ALLOWED_DOMAIN` | Si usás Workspace | Dominio corporativo, ej. `mioptica.com.ar`. **Dejar vacío si usás cuentas `@gmail.com`** |
 | `SHEET_ID` | Sí | ID del Google Sheet |
 | `DRIVE_FOLDER_ID` | Sí | ID de la carpeta de Drive |
-| `ALLOWED_EMAILS` | Opcional | Lista separada por comas de emails autorizados |
+| `ALLOWED_EMAILS` | Sí con `@gmail.com` | Lista separada por comas de emails autorizados (ej. `ceo.lazotta@gmail.com,vendedor@gmail.com`) |
 | `SHEET_NAME` | Opcional | Nombre de la pestaña (default: primera hoja) |
 | `GEMINI_MODEL` | Opcional | Default: `gemini-flash-latest` |
 | `RATE_OCR_PER_HOUR` | Opcional | Default: `30` |
@@ -86,7 +87,7 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 1. Editá `web/js/config.js` con los valores públicos:
    - `SCRIPT_URL`: la URL `/exec` de Apps Script.
    - `OAUTH_CLIENT_ID`: el Client ID creado en el paso 3.
-   - `ALLOWED_DOMAIN`: tu dominio corporativo (ej. `'mioptica.com.ar'`).
+   - `ALLOWED_DOMAIN`: tu dominio corporativo (ej. `'mioptica.com.ar'`), o `''` vacío si usás cuentas `@gmail.com`.
    - *(Ninguno de estos tres datos es secreto).*
 2. Hacé commit y push al repositorio en GitHub.
 3. En GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.

@@ -74,7 +74,7 @@ function cfg_() {
 function authenticate_(token) {
   if (!token || String(token).length > 4096) throw httpError_(401, 'Iniciá sesión con tu cuenta corporativa');
   var c = cfg_();
-  if (!c.clientId || !c.domain) throw httpError_(500, 'Backend sin configurar');
+  if (!c.clientId || (!c.domain && !c.allowedEmails.length)) throw httpError_(500, 'Backend sin configurar');
 
   // 1) Pre-chequeo local (gratis): descarta basura sin gastar UrlFetch.
   var claims;
@@ -335,8 +335,8 @@ function setupCheck() {
   var c = cfg_();
   var out = [];
   out.push('OAUTH_CLIENT_ID: ' + (c.clientId ? 'OK' : 'FALTA'));
-  out.push('ALLOWED_DOMAIN: ' + (c.domain || 'FALTA'));
-  out.push('ALLOWED_EMAILS: ' + (c.allowedEmails.length ? c.allowedEmails.length + ' usuarios' : '(todo el dominio)'));
+  out.push('ALLOWED_DOMAIN: ' + (c.domain || (c.allowedEmails.length ? '(no requerido: usa ALLOWED_EMAILS)' : 'FALTA (poné ALLOWED_DOMAIN o ALLOWED_EMAILS)')));
+  out.push('ALLOWED_EMAILS: ' + (c.allowedEmails.length ? c.allowedEmails.length + ' usuarios' : (c.domain ? '(todo el dominio)' : 'FALTA')));
   try {
     var ss = SpreadsheetApp.openById(c.sheetId);
     out.push('Sheet: ' + ss.getName());
