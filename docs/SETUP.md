@@ -25,8 +25,12 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 
 ## 3. Configurar Google Cloud y OAuth
 
-1. Ingresá a [Google Cloud Console](https://console.cloud.google.com/) con tu cuenta de Google y creá o elegí un proyecto.
-2. En **Google Auth Platform → Público** (o *Pantalla de consentimiento de OAuth*):
+1. Creá el proyecto **Presupuestalino** en [Google Cloud Console](https://console.cloud.google.com/):
+   - Hacé clic en el **selector de proyecto** (botón arriba a la izquierda, junto al logo de Google Cloud, donde figura el nombre del proyecto actual).
+   - En la ventana emergente, tocá **Proyecto nuevo** (arriba a la derecha).
+   - En **Nombre del proyecto**, escribí `Presupuestalino` (Organización: *Sin organización* si usás `@gmail.com`) y tocá **Crear**.
+   - Cuando termine de crearse (notificación arriba a la derecha), hacé clic en **Seleccionar proyecto** y verificá que en la pantalla diga **`Estás trabajando en Presupuestalino`**.
+2. Abrí **APIs y servicios** (tarjeta en *Acceso rápido*) → **Pantalla de consentimiento de OAuth** (o **Google Auth Platform → Público**):
    - **Si usás Google Workspace con dominio propio:** elegí **Interno (Internal)**. Esto limita el acceso solo a cuentas de tu dominio.
    - **Si usás cuentas `@gmail.com` comunes (ej. tu captura actual):** Google Cloud muestra **Usuarios externos** en estado **"Prueba"**. Dejalo en **Prueba** (no lo publiques) y agregá las cuentas autorizadas en **Usuarios de prueba → `+ Add users`** (ej. los emails de tus vendedores). Así Google bloquea cualquier otra cuenta antes de emitir token.
    - Completá nombre de la app y emails de contacto.
