@@ -4,10 +4,10 @@
  */
 window.APP_CONFIG = {
   // URL "/exec" del Web App de Apps Script. Vacío = modo demo.
-  SCRIPT_URL: '',
+  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwZnIPQfs2xjWETYHpxD13hONoFr7uUHeHzKs_huyaoxI6M4_83Qz3tydz98-9SQt1oXQ/exec',
 
   // Client ID OAuth (tipo "Aplicación web"). Es público por diseño.
-  OAUTH_CLIENT_ID: '',
+  OAUTH_CLIENT_ID: '55515524869-abco32dch8e9v54ftlj2th4tgr5pnacp.apps.googleusercontent.com',
 
   // Dominio Workspace (ej. 'optica.com.ar'). Solo preselecciona cuenta;
   // el backend es quien rechaza cuentas ajenas.
