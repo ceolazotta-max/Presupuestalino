@@ -41,12 +41,17 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 
 ## 4. API Key de Gemini
 
-- **Fase de pruebas (solo recetas ficticias o anonimizadas):**
-  - Generá una API key en [Google AI Studio](https://aistudio.google.com/apikey) (capa gratuita).
-  - ⚠️ **Prohibido subir recetas reales** en capa gratuita: Google puede usar los datos para entrenar modelos.
-- **Producción (datos reales de salud, Ley 25.326):**
-  - Vinculá facturación en Google Cloud (**Pay-as-you-go**) o usá **Vertex AI**, donde los datos no se usan para entrenamiento.
-  - Configurá alertas y límite de presupuesto en Google Cloud Billing.
+### A. Fase de pruebas (Nivel gratuito — solo recetas ficticias o anonimizadas)
+1. Ingresá a [Google AI Studio — Claves de API](https://aistudio.google.com/apikey) con la misma cuenta de Google.
+2. Tocá el botón **Importar proyectos** (en el centro) y seleccioná el proyecto de Google Cloud que creaste en el paso 3 *(así queda todo ordenado bajo un mismo proyecto)*.
+3. Tocá **Crear clave de API** (arriba a la derecha), asignale un nombre (ej. `Presupuestalino`) y elegí el proyecto importado.
+   *(Si es solo para probar rápido, también podés crearla en el proyecto por defecto o copiar una clave existente con el ícono de copiar en la columna de acciones).*
+4. Copiá la clave generada y guardala aparte para pegarla en `GEMINI_API_KEY` en el paso 5.3 *(nunca la pegues en `config.js` ni la subas a GitHub)*.
+5. ⚠️ **Prohibido subir recetas reales** mientras figure **Nivel gratuito**: Google puede usar las fotos para entrenar modelos.
+
+### B. Paso a Producción (datos reales de salud, Ley 25.326)
+1. En la misma tabla de **Claves de API**, en la columna **Nivel de facturación**, hacé clic en **Configurar la facturación** junto a tu proyecto y vinculá una tarjeta en Google Cloud (**Pay-as-you-go**). Cuando cambia a nivel pago, Google deja de usar los datos para entrenamiento. *(Alternativa: Vertex AI).*
+2. En [Google Cloud Billing](https://console.cloud.google.com/billing) → **Presupuestos y alertas**, creá un presupuesto mensual (ej. USD 5) con alertas al 50 %, 90 % y 100 %.
 
 ---
 
