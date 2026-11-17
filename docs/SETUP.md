@@ -103,10 +103,16 @@ Abrí `http://localhost:8080` en el navegador (o en GitHub Pages una vez publica
 ## 6. Conectar el Frontend y publicar en GitHub Pages
 
 1. Editá `web/js/config.js` con los valores públicos:
-   - `SCRIPT_URL`: la URL `/exec` de Apps Script.
+   - `SCRIPT_URL`: la URL `/exec` de Apps Script (paso 5.5).
    - `OAUTH_CLIENT_ID`: el Client ID creado en el paso 3.
    - `ALLOWED_DOMAIN`: tu dominio corporativo (ej. `'mioptica.com.ar'`), o `''` vacío si usás cuentas `@gmail.com`.
    - *(Ninguno de estos tres datos es secreto).*
-2. Hacé commit y push al repositorio en GitHub.
-3. En GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-4. El workflow `.github/workflows/pages.yml` publicará automáticamente la carpeta `web/`.
+2. Hacé commit y `git push` al repositorio en GitHub.
+3. En GitHub, abrí **Settings → Pages → Build and deployment → Source** y elegí **GitHub Actions**:
+   - **No toques** los botones `Configure` de *GitHub Pages Jekyll* ni *Static HTML*: el repositorio ya trae `.github/workflows/pages.yml` configurado para publicar la carpeta `web/`.
+4. Dispará o verificá el despliegue:
+   - Si cambiaste `Source` a **GitHub Actions** *después* de haber hecho `git push`, el workflow no corre retroactivo: entrá a la pestaña **Actions** (menú superior del repo) → **Deploy GitHub Pages** (izquierda) → desplegable **Run workflow** → botón verde **Run workflow** (o hacé un nuevo `git push`).
+   - Cada `git push` futuro a `master` o `main` volverá a publicar automáticamente.
+5. Esperá ~30 segundos a que el run termine en verde (✅) en **Actions**. La URL publicada aparece ahí mismo y en **Settings → Pages**:
+   - `https://ceolazotta-max.github.io/Presupuestalino/` (en general `https://<usuario>.github.io/<repo>/`).
+   - Verificá que en Google Cloud → OAuth *Orígenes autorizados de JavaScript* figure exactamente `https://ceolazotta-max.github.io` (sin barra final ni `/Presupuestalino`).
