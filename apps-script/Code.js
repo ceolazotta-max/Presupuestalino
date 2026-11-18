@@ -9,7 +9,7 @@ function rxFields_() { return buildRxFields(); }
 var GLOBAL_FAIL_LIMIT = 200; // rechazos / 10 min antes de cortar validaciones remotas
 
 var OCR_PROMPT = [
-  'Sos un asistente experto en recetas ópticas argentinas manuscritas.',
+  'Sos un asistente experto en recetas ópticas argentinas (manuscritas, impresas/electrónicas o mixtas).',
   'Devolvé ÚNICAMENTE un objeto JSON válido con esta estructura exacta:',
   '{ "es_receta_optica": boolean, "campos": { <clave>: { "valor": string|null, "confianza": "alta"|"media"|"baja" } }, "anotaciones_extra": [{ "texto": string, "ubicacion": string, "confianza": "alta"|"media"|"baja" }] }.',
   'Convenciones: OD = ojo derecho; OI (u OS) = ojo izquierdo; ESF = esfera; CIL = cilindro; EJE en grados (0-180);',
@@ -18,12 +18,12 @@ var OCR_PROMPT = [
   'Normalizá dioptrías con signo explícito y 2 decimales con punto (ej "-1.75", "+0.50"). "Plano", "N", "neutro" o "pl" = "0.00".',
   'Eje: solo el número entero, sin "°".',
   'Si la receta no distingue lejos/cerca pero indica solo graduación de lejos (o una sola tabla sin "cerca"), usá los campos lejos_*; si indica "cerca" o "para leer", usá cerca_*; si solo indica ADD, completá "adicion" y dejá cerca_* en null.',
-  'NO inventes: si un valor no está o es ilegible, valor = null y confianza = "baja".',
+  'NO inventes: si un valor no está, es ilegible o está tapado/censurado con un rectángulo o tachadura, devolvé valor = null y confianza = "baja".',
   'Confianza: "alta" si es claramente legible, "media" si hay dudas razonables, "baja" si es una conjetura.',
-  'Todo texto, número, símbolo o garabato manuscrito que NO corresponda a un campo (notas, flechas, tachaduras con texto,',
-  'indicaciones al óptico, teléfonos, firmas legibles, sellos) va en "anotaciones_extra" con su transcripción tentativa',
-  'y ubicación aproximada (ej "margen superior derecho").',
-  'Ignorá texto preimpreso del formulario salvo nombre/matrícula del médico.',
+  'Todo texto o indicación relevante para el óptico que NO corresponda a un campo (notas, flechas,',
+  'tratamientos pedidos, teléfonos, sellos legibles) va en "anotaciones_extra" (máximo 5 items) con su transcripción tentativa',
+  'y ubicación aproximada (ej "margen inferior derecho").',
+  'Ignorá códigos QR, códigos de barras, números administrativos/afiliado del formulario y textos legales del membrete.',
   'es_receta_optica = false si la imagen claramente no es una receta óptica.'
 ].join(' ');
 
@@ -197,34 +197,46 @@ function handleOcr_(user, body) {
   var img = image_(body.image);
   var fields = rxFields_();
 
-  var payload = JSON.stringify({
-    contents: [{ parts: [{ text: buildOcrPrompt_(fields) }, { inline_data: { mime_type: img.mime, data: img.data } }] }],
-    generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+  var baseContents = [{ parts: [{ text: buildOcrPrompt_(fields) }, { inline_data: { mime_type: img.mime, data: img.data } }] }];
+  var payloadBase = JSON.stringify({
+    contents: baseContents,
+    generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 1500 }
+  });
+  var payloadNoThink = JSON.stringify({
+    contents: baseContents,
+    generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 1500, thinkingConfig: { thinkingBudget: 0 } }
   });
 
   var cache = CacheService.getScriptCache();
-  var models = ocrModelCandidates_(c, cache.get('ocr_ok_model'));
+  var cachedModel = cache.get('ocr_ok_model');
+  var models = ocrModelCandidates_(c, cachedModel);
 
   var res = null;
   var lastStatus = 0;
   var lastDetail = '';
   var tried = [];
+  var started = Date.now();
   for (var i = 0; i < models.length; i++) {
+    if (i > 0 && Date.now() - started > 65000) break;
     var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
       encodeURIComponent(models[i]) + ':generateContent';
+    var t0 = Date.now();
     var attempt = UrlFetchApp.fetch(url, {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-goog-api-key': c.geminiKey }, payload: payload
+      headers: { 'x-goog-api-key': c.geminiKey },
+      payload: models[i] === 'gemini-2.5-flash' ? payloadNoThink : payloadBase
     });
+    var sec = Math.round((Date.now() - t0) / 1000);
     var status = attempt.getResponseCode();
     if (status === 200) {
       res = attempt;
       cache.put('ocr_ok_model', models[i], 1800);
       break;
     }
+    if (i === 0 && cachedModel) cache.remove('ocr_ok_model');
     var snippet = attempt.getContentText().slice(0, 300);
-    console.error('Gemini (' + models[i] + ') ' + status + ': ' + snippet);
-    tried.push(models[i] + ':' + status);
+    console.error('Gemini (' + models[i] + ') ' + status + ' in ' + sec + 's: ' + snippet);
+    tried.push(models[i] + ':' + status + '(' + sec + 's)');
     if (status !== 404 || !lastStatus) {
       lastStatus = status;
       try {
@@ -233,7 +245,7 @@ function handleOcr_(user, body) {
       } catch (e) { /* noop */ }
     }
     if (status === 400 || status === 404 || status === 429 || status === 500 || status === 503) {
-      if ((status === 503 || status === 429) && i < models.length - 1) Utilities.sleep(800);
+      if ((status === 503 || status === 429) && i < models.length - 1 && Date.now() - started < 60000) Utilities.sleep(800);
       continue;
     }
     throw httpError_(502, 'Falló el reconocimiento (' + status + (lastDetail ? ': ' + lastDetail : '') + ')');
