@@ -175,6 +175,21 @@ function handleCatalog_(user) {
 
 // ---------- OCR ----------
 
+function ocrModelCandidates_(c, cachedModel) {
+  var explicit = (c.geminiModel && c.geminiModel !== 'gemini-flash-latest') ? c.geminiModel : '';
+  return [
+    cachedModel,
+    explicit,
+    'gemini-flash-lite-latest',
+    'gemini-2.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-flash-latest'
+  ].filter(function (m, i, arr) { return m && arr.indexOf(m) === i; });
+}
+
 function handleOcr_(user, body) {
   var c = cfg_();
   if (!c.geminiKey) throw httpError_(500, 'Falta GEMINI_API_KEY');
@@ -182,18 +197,13 @@ function handleOcr_(user, body) {
   var img = image_(body.image);
   var fields = rxFields_();
 
-  var baseContents = [{ parts: [{ text: buildOcrPrompt_(fields) }, { inline_data: { mime_type: img.mime, data: img.data } }] }];
-  var payloadWithThink = JSON.stringify({
-    contents: baseContents,
-    generationConfig: { temperature: 0, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
-  });
-  var payloadNoThink = JSON.stringify({
-    contents: baseContents,
+  var payload = JSON.stringify({
+    contents: [{ parts: [{ text: buildOcrPrompt_(fields) }, { inline_data: { mime_type: img.mime, data: img.data } }] }],
     generationConfig: { temperature: 0, responseMimeType: 'application/json' }
   });
 
-  var models = [c.geminiModel, 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite']
-    .filter(function (m, i, arr) { return m && arr.indexOf(m) === i; });
+  var cache = CacheService.getScriptCache();
+  var models = ocrModelCandidates_(c, cache.get('ocr_ok_model'));
 
   var res = null;
   var lastStatus = 0;
@@ -204,18 +214,12 @@ function handleOcr_(user, body) {
       encodeURIComponent(models[i]) + ':generateContent';
     var attempt = UrlFetchApp.fetch(url, {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-goog-api-key': c.geminiKey }, payload: payloadWithThink
+      headers: { 'x-goog-api-key': c.geminiKey }, payload: payload
     });
     var status = attempt.getResponseCode();
-    if (status === 400 && /thinking/i.test(attempt.getContentText())) {
-      attempt = UrlFetchApp.fetch(url, {
-        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-        headers: { 'x-goog-api-key': c.geminiKey }, payload: payloadNoThink
-      });
-      status = attempt.getResponseCode();
-    }
     if (status === 200) {
       res = attempt;
+      cache.put('ocr_ok_model', models[i], 1800);
       break;
     }
     var snippet = attempt.getContentText().slice(0, 300);
@@ -228,8 +232,8 @@ function handleOcr_(user, body) {
         if (errJson && errJson.error && errJson.error.message) lastDetail = errJson.error.message;
       } catch (e) { /* noop */ }
     }
-    if (status === 503 || status === 429 || status === 500 || status === 404) {
-      if ((status === 503 || status === 429) && i < models.length - 1) Utilities.sleep(1200);
+    if (status === 400 || status === 404 || status === 429 || status === 500 || status === 503) {
+      if ((status === 503 || status === 429) && i < models.length - 1) Utilities.sleep(800);
       continue;
     }
     throw httpError_(502, 'Falló el reconocimiento (' + status + (lastDetail ? ': ' + lastDetail : '') + ')');
@@ -410,6 +414,29 @@ function setupCheck() {
         .filter(function (n) { return /flash/i.test(n); });
       out.push('Modelos flash disponibles: ' + (list.join(', ') || '(ninguno)'));
     }
+    var probePayload = JSON.stringify({
+      contents: [{ parts: [{ text: 'Responde {"ok":true}' }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 16 }
+    });
+    var cache = CacheService.getScriptCache();
+    var candidates = ocrModelCandidates_(c, '');
+    var probeTried = [];
+    var okModel = '';
+    for (var i = 0; i < candidates.length; i++) {
+      var rp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' +
+        encodeURIComponent(candidates[i]) + ':generateContent', {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { 'x-goog-api-key': c.geminiKey }, payload: probePayload
+      });
+      var st = rp.getResponseCode();
+      probeTried.push(candidates[i] + ':' + st);
+      if (st === 200) {
+        okModel = candidates[i];
+        cache.put('ocr_ok_model', okModel, 1800);
+        break;
+      }
+    }
+    out.push('Gemini OCR prueba: ' + (okModel ? 'OK (' + okModel + ')' : 'SIN RESPUESTA 200') + ' [' + probeTried.join(', ') + ']');
   } catch (e) { out.push('Gemini: ERROR ' + e.message); }
   console.log(out.join('\n'));
   return out;
