@@ -53,8 +53,8 @@ window.APP_CONFIG = {
   ],
 
   // Compresión de imagen en el cliente.
-  MAX_IMAGE_SIDE: 2000,
-  JPEG_QUALITY: 0.85,
+  MAX_IMAGE_SIDE: 1280,
+  JPEG_QUALITY: 0.80,
 
   // Presupuestador (Paso 4).
   OPTICA_NAME: 'Óptica Cristalino',
