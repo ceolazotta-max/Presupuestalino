@@ -10,12 +10,14 @@ var GLOBAL_FAIL_LIMIT = 200; // rechazos / 10 min antes de cortar validaciones r
 
 var OCR_PROMPT = [
   'Sos un asistente experto en recetas ópticas argentinas manuscritas.',
-  'Transcribí la receta de la imagen al JSON pedido.',
+  'Devolvé ÚNICAMENTE un objeto JSON válido con esta estructura exacta:',
+  '{ "es_receta_optica": boolean, "campos": { <clave>: { "valor": string|null, "confianza": "alta"|"media"|"baja" } }, "anotaciones_extra": [{ "texto": string, "ubicacion": string, "confianza": "alta"|"media"|"baja" }] }.',
   'Convenciones: OD = ojo derecho; OI (u OS) = ojo izquierdo; ESF = esfera; CIL = cilindro; EJE en grados (0-180);',
   'ADD = adición; DIP/DP = distancia interpupilar (ej "62" o "31/31").',
+  'Si un ojo tiene un solo número (ej "OD -2.00", "OI -1.50"), ese valor es ESFERA (cilindro y eje quedan en null).',
   'Normalizá dioptrías con signo explícito y 2 decimales con punto (ej "-1.75", "+0.50"). "Plano", "N", "neutro" o "pl" = "0.00".',
   'Eje: solo el número entero, sin "°".',
-  'Si la receta tiene una sola fila para cerca, usá los campos de cerca; si solo indica ADD, completá "adicion" y dejá cerca en null.',
+  'Si la receta no distingue lejos/cerca pero indica solo graduación de lejos (o una sola tabla sin "cerca"), usá los campos lejos_*; si indica "cerca" o "para leer", usá cerca_*; si solo indica ADD, completá "adicion" y dejá cerca_* en null.',
   'NO inventes: si un valor no está o es ilegible, valor = null y confianza = "baja".',
   'Confianza: "alta" si es claramente legible, "media" si hay dudas razonables, "baja" si es una conjetura.',
   'Todo texto, número, símbolo o garabato manuscrito que NO corresponda a un campo (notas, flechas, tachaduras con texto,',
@@ -24,6 +26,11 @@ var OCR_PROMPT = [
   'Ignorá texto preimpreso del formulario salvo nombre/matrícula del médico.',
   'es_receta_optica = false si la imagen claramente no es una receta óptica.'
 ].join(' ');
+
+function buildOcrPrompt_(fields) {
+  var keys = fields.map(function (f) { return f.key; }).join(', ');
+  return OCR_PROMPT + ' Claves exactas requeridas dentro de "campos": ' + keys + '.';
+}
 
 // ---------- Entradas HTTP ----------
 
@@ -173,30 +180,52 @@ function handleOcr_(user, body) {
   if (!c.geminiKey) throw httpError_(500, 'Falta GEMINI_API_KEY');
   rateLimit_('ocr', user.email, c.rateOcr);
   var img = image_(body.image);
+  var fields = rxFields_();
 
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
-    encodeURIComponent(c.geminiModel) + ':generateContent';
-  var payload = {
-    contents: [{ parts: [{ text: OCR_PROMPT }, { inline_data: { mime_type: img.mime, data: img.data } }] }],
-    generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: buildRxSchema(rxFields_()) }
-  };
-  var res = UrlFetchApp.fetch(url, {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    headers: { 'x-goog-api-key': c.geminiKey }, payload: JSON.stringify(payload)
+  var payload = JSON.stringify({
+    contents: [{ parts: [{ text: buildOcrPrompt_(fields) }, { inline_data: { mime_type: img.mime, data: img.data } }] }],
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' }
   });
-  var status = res.getResponseCode();
-  if (status === 429) throw httpError_(503, 'OCR saturado. Reintentá en un minuto.');
-  if (status !== 200) {
-    console.error('Gemini ' + status + ': ' + res.getContentText().slice(0, 500));
-    throw httpError_(502, 'Falló el reconocimiento (' + status + ')');
+
+  var models = [c.geminiModel, 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
+    .filter(function (m, i, arr) { return m && arr.indexOf(m) === i; });
+
+  var res = null;
+  var lastStatus = 500;
+  for (var i = 0; i < models.length; i++) {
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+      encodeURIComponent(models[i]) + ':generateContent';
+    var attempt = UrlFetchApp.fetch(url, {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-goog-api-key': c.geminiKey }, payload: payload
+    });
+    lastStatus = attempt.getResponseCode();
+    if (lastStatus === 200) {
+      res = attempt;
+      break;
+    }
+    console.error('Gemini (' + models[i] + ') ' + lastStatus + ': ' + attempt.getContentText().slice(0, 400));
+    if (lastStatus === 503 || lastStatus === 429 || lastStatus === 500 || lastStatus === 404) {
+      if ((lastStatus === 503 || lastStatus === 429) && i < models.length - 1) Utilities.sleep(1200);
+      continue;
+    }
+    throw httpError_(502, 'Falló el reconocimiento (' + lastStatus + ')');
   }
+  if (!res) {
+    if (lastStatus === 429 || lastStatus === 503) {
+      throw httpError_(503, 'OCR temporalmente saturado (' + lastStatus + '). Reintentá en unos segundos.');
+    }
+    throw httpError_(502, 'Falló el reconocimiento (' + lastStatus + ')');
+  }
+
   var data = JSON.parse(res.getContentText());
   var text = data && data.candidates && data.candidates[0] && data.candidates[0].content &&
     data.candidates[0].content.parts && data.candidates[0].content.parts[0].text;
   if (!text) throw httpError_(502, 'El OCR no devolvió resultado');
-  var rx;
-  try { rx = JSON.parse(text); } catch (e) { throw httpError_(502, 'Respuesta OCR ilegible'); }
-  return { ok: true, fields: rxFields_(), rx: rx, raw: text };
+  var cleaned = String(text).replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+  var parsed;
+  try { parsed = JSON.parse(cleaned); } catch (e) { throw httpError_(502, 'Respuesta OCR ilegible'); }
+  return { ok: true, fields: fields, rx: normalizeOcrResult(parsed, fields), raw: text };
 }
 
 // ---------- Guardado ----------

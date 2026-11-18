@@ -274,6 +274,46 @@ function catalogItemToRow(it) {
   ];
 }
 
+/** Normaliza la respuesta JSON de Gemini al esquema esperado por la UI. */
+function normalizeOcrResult(rawObj, fields) {
+  rawObj = (rawObj && typeof rawObj === 'object') ? rawObj : {};
+  fields = Array.isArray(fields) ? fields : buildRxFields();
+  var rawCampos = (rawObj.campos && typeof rawObj.campos === 'object') ? rawObj.campos : rawObj;
+  var validConf = { alta: 'alta', media: 'media', baja: 'baja' };
+  var campos = {};
+
+  fields.forEach(function (f) {
+    var cell = rawCampos[f.key];
+    var val = null;
+    var conf = 'baja';
+    if (cell && typeof cell === 'object' && !Array.isArray(cell)) {
+      val = (cell.valor === undefined || cell.valor === null || String(cell.valor).trim() === '') ? null : String(cell.valor).trim();
+      conf = validConf[String(cell.confianza || '').toLowerCase()] || (val ? 'media' : 'baja');
+    } else if (cell !== undefined && cell !== null && String(cell).trim() !== '') {
+      val = String(cell).trim();
+      conf = 'media';
+    }
+    campos[f.key] = { valor: val, confianza: conf };
+  });
+
+  var rawExtras = Array.isArray(rawObj.anotaciones_extra) ? rawObj.anotaciones_extra : [];
+  var extras = rawExtras.map(function (a) {
+    if (typeof a === 'string') return { texto: a.trim(), ubicacion: '', confianza: 'media' };
+    if (!a || typeof a !== 'object') return null;
+    return {
+      texto: String(a.texto || '').trim(),
+      ubicacion: String(a.ubicacion || '').trim(),
+      confianza: validConf[String(a.confianza || '').toLowerCase()] || 'media'
+    };
+  }).filter(function (a) { return a && a.texto; });
+
+  return {
+    es_receta_optica: rawObj.es_receta_optica !== false,
+    campos: campos,
+    anotaciones_extra: extras
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRxFields: buildRxFields, buildRxSchema: buildRxSchema, normalizeName: normalizeName,
@@ -283,6 +323,6 @@ if (typeof module !== 'undefined' && module.exports) {
     sanitizeExtraFields: sanitizeExtraFields, MAX_IMAGE_BYTES: MAX_IMAGE_BYTES,
     CATALOG_HEADERS: CATALOG_HEADERS, SEED_CATALOG_ITEMS: SEED_CATALOG_ITEMS,
     parseCatalogRows: parseCatalogRows, sanitizeCatalogItem: sanitizeCatalogItem,
-    catalogItemToRow: catalogItemToRow
+    catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult
   };
 }

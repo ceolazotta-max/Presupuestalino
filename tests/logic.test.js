@@ -245,3 +245,26 @@ test('Logic catálogo sincronizado con Quote.SEED_CATALOG', () => {
   assert.equal(manual.tipo, 'Laboratorio'); // Multifocal fuerza Laboratorio
   assert.equal(manual.precioMedioPar, 85000);
 });
+
+test('Logic.normalizeOcrResult completa las 22 claves y normaliza anotaciones', () => {
+  const fields = L.buildRxFields();
+  const norm = L.normalizeOcrResult({
+    es_receta_optica: true,
+    campos: {
+      lejos_od_esfera: { valor: '-2.00', confianza: 'alta' },
+      lejos_oi_esfera: '-1.50'
+    },
+    anotaciones_extra: [
+      { texto: 'Antirreflejo', ubicacion: 'centro' },
+      'sello médico',
+      { texto: '   ' }
+    ]
+  }, fields);
+  assert.equal(norm.es_receta_optica, true);
+  assert.equal(Object.keys(norm.campos).length, 22);
+  assert.deepEqual(norm.campos.lejos_od_esfera, { valor: '-2.00', confianza: 'alta' });
+  assert.deepEqual(norm.campos.lejos_oi_esfera, { valor: '-1.50', confianza: 'media' });
+  assert.deepEqual(norm.campos.lejos_od_cilindro, { valor: null, confianza: 'baja' });
+  assert.equal(norm.anotaciones_extra.length, 2);
+  assert.equal(norm.anotaciones_extra[1].texto, 'sello médico');
+});
