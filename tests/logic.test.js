@@ -79,12 +79,15 @@ test('sanitizeCell neutraliza fórmulas pero no números con signo', () => {
   assert.equal(L.sanitizeCell('x'.repeat(2000)).length, 1000);
 });
 
-test('buildRow respeta encabezados existentes y agrega faltantes', () => {
+test('buildRow respeta encabezados existentes, agrega faltantes y preserva valores al actualizar', () => {
   const r = L.buildRow(['Fecha', 'Usuario', 'Otra', ''], [['Usuario', 'ana'], ['Nueva', 'v'], ['Fecha', 't']]);
   assert.deepEqual(r.headers, ['Fecha', 'Usuario', 'Otra', 'Nueva']);
   assert.deepEqual(r.row, ['t', 'ana', '', 'v']);
   assert.deepEqual(r.added, ['Nueva']);
   assert.deepEqual(L.buildRow([], [['A', 1]]).headers, ['A']);
+
+  const upd = L.buildRow(['UUID', 'Foto', 'Estado'], [['Estado', 'PRESUPUESTADO']], ['u-1', 'https://foto', 'INCOMPLETO']);
+  assert.deepEqual(upd.row, ['u-1', 'https://foto', 'PRESUPUESTADO']);
 });
 
 test('schema Gemini cubre todos los campos', () => {
@@ -144,6 +147,7 @@ test('Mock.handle simula ocr y save', async () => {
   const cat = await Mock.handle({ action: 'catalog' });
   assert.equal(cat.ok, true);
   assert.equal(cat.items.length, Q.SEED_CATALOG.length);
+  assert.equal(cat.paymentConfig.cashDiscountPct, 10);
 });
 
 test('Quote.normalizeEyeRx transpone cilindro positivo a negativo', () => {
@@ -159,17 +163,28 @@ test('Quote.normalizeEyeRx transpone cilindro positivo a negativo', () => {
   assert.equal(neg.cil_t, -0.75);
 });
 
-test('Quote evalúa Stock vs Laboratorio por medio par independiente', () => {
+test('Quote evalúa Stock, Rango Extendido y Laboratorio por medio par independiente', () => {
   const od = Q.normalizeEyeRx('-1.50', '-0.50', '90', '', '');
-  const oi = Q.normalizeEyeRx('-1.50', '-2.75', '90', '', '');
+  const oiExt = Q.normalizeEyeRx('-1.50', '-2.75', '90', '', '');
+  const oiLab = Q.normalizeEyeRx('-1.50', '-5.00', '90', '', '');
+  assert.equal(Q.getEyeMinTier(od, 'lejos').tipo, 'Stock');
+  assert.equal(Q.getEyeMinTier(oiExt, 'lejos').tipo, 'Rango Extendido');
+  assert.equal(Q.getEyeMinTier(oiLab, 'lejos').tipo, 'Laboratorio');
   assert.equal(Q.canEyeUseStock(od, 'lejos').ok, true);
-  assert.equal(Q.canEyeUseStock(oi, 'lejos').ok, false);
+  assert.equal(Q.canEyeUseStock(oiExt, 'lejos').ok, false);
 
   const stk = Q.SEED_CATALOG.find((p) => p.codigo === 'STK-150-AR');
+  const ext = Q.SEED_CATALOG.find((p) => p.codigo === 'EXT-156-AR');
   const lab = Q.SEED_CATALOG.find((p) => p.codigo === 'LAB-150-AR');
   assert.equal(Q.checkProductForEye(stk, od, 'lejos').allowed, true);
-  assert.equal(Q.checkProductForEye(stk, oi, 'lejos').allowed, false);
-  assert.equal(Q.checkProductForEye(lab, oi, 'lejos').allowed, true);
+  assert.equal(Q.checkProductForEye(stk, oiExt, 'lejos').allowed, false);
+  assert.equal(Q.checkProductForEye(ext, oiExt, 'lejos').allowed, true);
+  assert.equal(Q.checkProductForEye(ext, oiLab, 'lejos').allowed, false);
+  assert.equal(Q.checkProductForEye(lab, oiLab, 'lejos').allowed, true);
+
+  // En ambos ojos, si requiredTierRank es 2 (Rango Extendido), Stock queda bloqueado incluso en OD
+  assert.equal(Q.checkProductForEye(stk, od, 'lejos', 2).allowed, false);
+  assert.equal(Q.checkProductForEye(ext, od, 'lejos', 2).allowed, true);
 
   // Suma meridiana (-7.00 + -2.00 = -9.00) supera sumaMax 8 de STK-150-AR
   const highSum = Q.normalizeEyeRx('-7.00', '-2.00', '180', '', '');
@@ -180,7 +195,7 @@ test('Quote evalúa Stock vs Laboratorio por medio par independiente', () => {
   assert.equal(Q.canEyeUseStock(od, 'multifocal').ok, false);
 });
 
-test('Quote.validateQuote detecta bloqueos duros y advertencias inteligentes', () => {
+test('Quote.validateQuote detecta bloqueos duros, regla ambos ojos y advertencias', () => {
   const rx = {
     lejos_od_esfera: '-5.00', lejos_od_cilindro: '-0.50', lejos_od_eje: '90',
     lejos_oi_esfera: '-1.50', lejos_oi_cilindro: '-2.75', lejos_oi_eje: '180',
@@ -194,18 +209,30 @@ test('Quote.validateQuote detecta bloqueos duros y advertencias inteligentes', (
     frame: { mode: 'nuevo', rimType: 'aire', price: 30000 }
   };
   const v1 = Q.validateQuote(rx, badState, Q.SEED_CATALOG);
-  assert.ok(v1.errors.some((e) => e.includes('OI:') && e.includes('Stock')));
+  assert.ok(v1.errors.some((e) => e.includes('OI:') && /Rango Extendido/i.test(e)));
+  assert.ok(v1.errors.some((e) => e.includes('OD:') && /Requiere nivel Rango Extendido/i.test(e)));
   assert.ok(v1.warnings.some((w) => w.includes('tratamiento')));
   assert.ok(v1.warnings.some((w) => w.includes('graduación alta')));
   assert.ok(v1.warnings.some((w) => w.includes('al aire')));
   assert.ok(v1.warnings.some((w) => w.includes('DIP')));
+
+  // Si OI lleva Laboratorio, OD con Stock/Rango Extendido dispara error de rango distinto
+  const mixedTier = {
+    uso: 'lejos',
+    eyesMode: 'both',
+    od: { mode: 'catalog', codigo: 'EXT-156-AR', price: 36000 },
+    oi: { mode: 'catalog', codigo: 'LAB-150-AR', price: 42000 },
+    frame: { mode: 'none', price: 0 }
+  };
+  const vMix = Q.validateQuote(rx, mixedTier, Q.SEED_CATALOG);
+  assert.ok(vMix.errors.some((e) => e.includes('mismo rango')));
 
   // Multifocal sin Adición ni Cerca → error bloqueante
   const vMulti = Q.validateQuote(rx, { ...badState, uso: 'multifocal' }, Q.SEED_CATALOG);
   assert.ok(vMulti.errors.some((e) => e.includes('Adición')));
 });
 
-test('Quote.calculateTotals calcula medios pares, descuento, efectivo y Plan Cristalino', () => {
+test('Quote.calculateTotals aplica precio mayor a ambos ojos, descuento, efectivo y Plan Cristalino', () => {
   const t = Q.calculateTotals({
     eyesMode: 'both',
     od: { price: 26000 },
@@ -214,14 +241,17 @@ test('Quote.calculateTotals calcula medios pares, descuento, efectivo y Plan Cri
     discount: 10000,
     deposit: 20000
   });
-  assert.equal(t.subtotal, 100000);
-  assert.equal(t.listTotal, 90000);
-  assert.equal(t.balanceBase, 70000);
-  assert.equal(t.cashTotal, 63000);
-  assert.equal(t.transferTotal, 70000);
+  // Regla: mayor graduación/precio (42000) se aplica a ambos cristales
+  assert.equal(t.odPrice, 42000);
+  assert.equal(t.oiPrice, 42000);
+  assert.equal(t.subtotal, 116000);
+  assert.equal(t.listTotal, 106000);
+  assert.equal(t.balanceBase, 86000);
+  assert.equal(t.cashTotal, 77400);
+  assert.equal(t.transferTotal, 86000);
   assert.equal(t.cristalinoOptions[0].cuotas, 2);
-  assert.equal(t.cristalinoOptions[0].total, 78400);
-  assert.equal(t.cristalinoOptions[0].cuotaMensual, 39200);
+  assert.equal(t.cristalinoOptions[0].total, 96320);
+  assert.equal(t.cristalinoOptions[0].cuotaMensual, 48160);
 
   // Medio par único (Solo OD) ignora precio OI
   const soloOd = Q.calculateTotals({
@@ -233,10 +263,12 @@ test('Quote.calculateTotals calcula medios pares, descuento, efectivo y Plan Cri
   assert.equal(soloOd.listTotal, 26000);
 });
 
-test('Logic catálogo sincronizado con Quote.SEED_CATALOG', () => {
+test('Logic catálogo y medios de pago sincronizados con Quote', () => {
   assert.deepEqual(L.SEED_CATALOG_ITEMS, Q.SEED_CATALOG);
   const rows = [L.CATALOG_HEADERS, ...L.SEED_CATALOG_ITEMS.map(L.catalogItemToRow)];
-  assert.equal(L.parseCatalogRows(rows).length, Q.SEED_CATALOG.length);
+  const parsed = L.parseCatalogRows(rows);
+  assert.equal(parsed.length, Q.SEED_CATALOG.length);
+  assert.ok(parsed.some((p) => p.tipo === 'Rango Extendido'));
 
   const manual = L.sanitizeCatalogItem({
     nombre: 'Multifocal 1.60 AR', tipo: 'Stock', diseno: 'Multifocal',
@@ -244,6 +276,20 @@ test('Logic catálogo sincronizado con Quote.SEED_CATALOG', () => {
   }, 'T1');
   assert.equal(manual.tipo, 'Laboratorio'); // Multifocal fuerza Laboratorio
   assert.equal(manual.precioMedioPar, 85000);
+
+  const manualExt = L.sanitizeCatalogItem({
+    nombre: 'Orgánico 1.56 Rango Ext', tipo: 'Rango Extendido', diseno: 'Monofocal',
+    indice: '1.56', tratamiento: 'AR', precioMedioPar: 36000
+  }, 'T2');
+  assert.equal(manualExt.tipo, 'Rango Extendido');
+  assert.equal(manualExt.cilMax, 4);
+
+  const payCfg = L.parsePaymentRows([L.PAYMENT_HEADERS, ...L.SEED_PAYMENT_ROWS]);
+  assert.equal(payCfg.cashDiscountPct, 10);
+  assert.equal(payCfg.transferSurchargePct, 0);
+  assert.equal(payCfg.cardPlans.length, 3);
+  assert.equal(payCfg.cristalinoPlans.length, 3);
+  assert.equal(payCfg.cristalinoPlans[0].surchargePct, 12);
 });
 
 test('Logic.normalizeOcrResult completa las 22 claves y normaliza anotaciones', () => {

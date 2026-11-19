@@ -1,11 +1,12 @@
 /**
- * app.js — Flujo: login → foto → OCR → revisión → datos → presupuesto → guardado.
+ * app.js — Flujo: login → foto → OCR → revisión (guarda INCOMPLETO) → datos → presupuesto → imprimir/WA → cierre de venta.
  */
 (function () {
   'use strict';
   var C = window.APP_CONFIG;
   var Q = window.Quote;
   var $ = function (sel) { return document.querySelector(sel); };
+  var DRAFT_KEY = 'presupuestalino_draft_v1';
 
   function defaultQuoteState() {
     return {
@@ -21,6 +22,10 @@
     };
   }
 
+  function defaultTimers() {
+    return { startMs: 0, stepStartMs: 0, inicioIso: '', paso1Sec: 0, paso2Sec: 0, paso3Sec: 0, paso4Sec: 0, cierreSec: 0 };
+  }
+
   var state = {
     auth: null,       // { token, email, exp }
     image: null,      // dataURL comprimido
@@ -30,12 +35,143 @@
     uuid: null,
     prefilledName: '',
     catalog: Q.SEED_CATALOG.slice(),
+    paymentConfig: C.PAYMENT_CONFIG || Q.DEFAULT_PAYMENT_CONFIG,
     catalogLoaded: false,
     quoteInitialized: false,
+    budgetIssued: false,
+    photoUploaded: false,
+    inFlightSave: null,
+    lastResult: null,
     quote: defaultQuoteState(),
+    timers: defaultTimers(),
     screen: 'login',
     reauthResolve: null
   };
+
+  // ---------- Cronómetro & Borrador ----------
+
+  function startTimers() {
+    var now = Date.now();
+    state.timers = {
+      startMs: now,
+      stepStartMs: now,
+      inicioIso: new Date(now).toISOString(),
+      paso1Sec: 0, paso2Sec: 0, paso3Sec: 0, paso4Sec: 0, cierreSec: 0
+    };
+  }
+
+  function markStep(key) {
+    if (!state.timers.stepStartMs) return;
+    var diff = Math.max(0, Math.round((Date.now() - state.timers.stepStartMs) / 1000));
+    state.timers[key] = (state.timers[key] || 0) + diff;
+    state.timers.stepStartMs = Date.now();
+  }
+
+  function stepKeyForScreen(scr) {
+    if (scr === 'review') return 'paso2Sec';
+    if (scr === 'extra') return 'paso3Sec';
+    if (scr === 'quote') return 'paso4Sec';
+    if (scr === 'done') return 'cierreSec';
+    return 'paso1Sec';
+  }
+
+  function buildTimingsPayload() {
+    var t = state.timers;
+    var totalSec = t.startMs ? Math.max(0, Math.round((Date.now() - t.startMs) / 1000)) : 0;
+    return {
+      inicioIso: t.inicioIso,
+      paso1Sec: t.paso1Sec,
+      paso2Sec: t.paso2Sec,
+      paso3Sec: t.paso3Sec,
+      paso4Sec: t.paso4Sec,
+      cierreSec: t.cierreSec,
+      totalSec: totalSec
+    };
+  }
+
+  function saveDraft() {
+    if (!state.uuid || !state.image || !state.ocr) return;
+    if (['review', 'extra', 'quote', 'done'].indexOf(state.screen) < 0) return;
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        uuid: state.uuid,
+        image: state.image,
+        ocr: state.ocr,
+        rxValues: collectRx(),
+        extras: state.extras,
+        extraMap: getExtraMap(),
+        prefilledName: state.prefilledName,
+        quote: state.quote,
+        quoteInitialized: state.quoteInitialized,
+        budgetIssued: state.budgetIssued,
+        photoUploaded: state.photoUploaded,
+        lastResult: state.lastResult,
+        timers: state.timers,
+        screen: state.screen
+      }));
+    } catch (e) { /* cuota llena o storage bloqueado */ }
+  }
+
+  function clearDraft() {
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* noop */ }
+  }
+
+  function restoreDraftIfAny() {
+    var raw;
+    try { raw = localStorage.getItem(DRAFT_KEY); } catch (e) { return false; }
+    if (!raw) return false;
+    try {
+      var d = JSON.parse(raw);
+      if (!d || !d.uuid || !d.image || !d.ocr || ['review', 'extra', 'quote', 'done'].indexOf(d.screen) < 0) return false;
+      state.uuid = d.uuid;
+      state.image = d.image;
+      state.ocr = d.ocr;
+      state.prefilledName = d.prefilledName || '';
+      state.quote = Object.assign(defaultQuoteState(), d.quote || {});
+      state.quoteInitialized = Boolean(d.quoteInitialized);
+      state.budgetIssued = Boolean(d.budgetIssued);
+      state.photoUploaded = Boolean(d.photoUploaded);
+      state.lastResult = d.lastResult || null;
+      state.timers = Object.assign(defaultTimers(), d.timers || {});
+      if (!state.timers.stepStartMs) state.timers.stepStartMs = Date.now();
+
+      renderReview();
+      if (d.rxValues) {
+        document.querySelectorAll('#rx-form [data-key]').forEach(function (el) {
+          if (d.rxValues[el.dataset.key] !== undefined) {
+            el.value = d.rxValues[el.dataset.key];
+            onRxInput(el);
+          }
+        });
+      }
+      if (Array.isArray(d.extras)) {
+        state.extras = d.extras;
+        renderExtras();
+      }
+      if (d.extraMap) {
+        var form = $('#extra-form');
+        C.EXTRA_FIELDS.forEach(function (f) {
+          var el = form.elements[f.key];
+          if (el && d.extraMap[f.key] !== undefined) el.value = d.extraMap[f.key];
+        });
+        syncConditionalFields();
+      }
+      if (d.screen === 'quote') {
+        syncQuoteControls();
+        go('quote');
+      } else if (d.screen === 'done') {
+        syncQuoteControls();
+        showDone(state.lastResult || { fila: '—' });
+      } else {
+        go(d.screen);
+      }
+      toast('Se recuperó un presupuesto pendiente. Completalo o abandoná con motivo.');
+      return true;
+    } catch (e) {
+      clearDraft();
+      return false;
+    }
+  }
 
   // ---------- Navegación ----------
 
@@ -46,12 +182,14 @@
     document.querySelectorAll('.screen').forEach(function (s) { s.hidden = s.id !== 'screen-' + screen; });
     var steps = $('#steps');
     steps.hidden = screen === 'login';
+    $('#btn-abandon').hidden = ['review', 'extra', 'quote', 'done'].indexOf(screen) < 0;
     var idx = ORDER.indexOf(screen);
     steps.querySelectorAll('li').forEach(function (li, i) {
       li.classList.toggle('active', i === idx);
       li.classList.toggle('done', i < idx);
     });
     window.scrollTo(0, 0);
+    saveDraft();
   }
 
   function loading(on, text) {
@@ -102,7 +240,10 @@
     if (saved) {
       try {
         var a = JSON.parse(saved);
-        if (a.exp - 120 > Date.now() / 1000) { setAuth(a); go('capture'); }
+        if (a.exp - 120 > Date.now() / 1000) {
+          setAuth(a);
+          if (!restoreDraftIfAny()) go('capture');
+        }
       } catch (e) { sessionStorage.removeItem('auth'); }
     }
     try {
@@ -137,7 +278,7 @@
       state.reauthResolve(state.auth.token);
       state.reauthResolve = null;
     } else if (state.screen === 'login') {
-      go('capture');
+      if (!restoreDraftIfAny()) go('capture');
     }
   }
 
@@ -166,7 +307,6 @@
     go('login');
   }
 
-  // Ejecuta llamada a API; si el backend dice 401, pide re-login y reintenta una vez.
   async function withAuth(fn) {
     var token = await getToken();
     try {
@@ -218,8 +358,21 @@
     setError('#capture-error', '');
     loading(true, 'Preparando imagen…');
     try {
+      clearDraft();
       state.image = await compressImage(file);
+      state.ocr = null;
+      state.extras = [];
+      state.original = {};
       state.uuid = newUuid();
+      state.prefilledName = '';
+      state.quoteInitialized = false;
+      state.budgetIssued = false;
+      state.photoUploaded = false;
+      state.lastResult = null;
+      state.quote = defaultQuoteState();
+      $('#extra-form').reset();
+      syncConditionalFields();
+      startTimers();
       $('#preview-img').src = state.image;
       $('#capture-empty').hidden = true;
       $('#capture-preview').hidden = false;
@@ -250,6 +403,7 @@
     try {
       var res = await withAuth(function (t) { return Api.ocr(t, state.image); });
       state.ocr = res;
+      markStep('paso1Sec');
       renderReview();
       go('review');
     } catch (e) {
@@ -281,7 +435,7 @@
     el.autocomplete = 'off';
     if (c.confianza === 'baja' || c.confianza === 'media') el.classList.add('conf-' + c.confianza);
     state.original[field.key] = val;
-    el.addEventListener('input', function () { onRxInput(el); });
+    el.addEventListener('input', function () { onRxInput(el); saveDraft(); });
     return el;
   }
 
@@ -394,7 +548,7 @@
       ta.rows = 2;
       ta.value = x.texto;
       ta.setAttribute('aria-label', 'Anotación ' + (i + 1));
-      ta.addEventListener('input', function () { x.texto = ta.value; });
+      ta.addEventListener('input', function () { x.texto = ta.value; saveDraft(); });
       var meta = document.createElement('div');
       meta.className = 'extra-meta';
       meta.textContent = [x.ubicacion, x.confianza && ('confianza ' + x.confianza)].filter(Boolean).join(' · ');
@@ -406,7 +560,7 @@
         b.className = 'btn ghost small ' + d[0] + '-btn';
         b.textContent = d[1];
         b.setAttribute('aria-pressed', String(x.decision === d[0]));
-        b.addEventListener('click', function () { x.decision = d[0]; renderExtras(); });
+        b.addEventListener('click', function () { x.decision = d[0]; renderExtras(); saveDraft(); });
         actions.appendChild(b);
       });
       item.appendChild(ta);
@@ -421,6 +575,7 @@
     renderExtras();
     var tas = $('#extras-list').querySelectorAll('textarea');
     tas[tas.length - 1].focus();
+    saveDraft();
   }
 
   function collectRx() {
@@ -435,6 +590,36 @@
     return fieldsChanged || extrasChanged;
   }
 
+  function saveIncompleteInBackground(rxValues) {
+    var paciente = (rxValues.paciente || '').trim();
+    var payload = {
+      uuid: state.uuid,
+      stage: 'incompleto',
+      image: state.photoUploaded ? '' : state.image,
+      photoName: paciente || 'Pendiente',
+      rx: rxValues,
+      extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
+        .map(function (x) { return x.texto.trim(); }),
+      isRx: !(state.ocr.rx && state.ocr.rx.es_receta_optica === false),
+      corrected: wasCorrected(rxValues),
+      timings: buildTimingsPayload()
+    };
+    var p = withAuth(function (tok) { return Api.save(Object.assign({ idToken: tok }, payload)); })
+      .then(function (res) {
+        state.photoUploaded = true;
+        state.lastResult = res;
+        saveDraft();
+        return res;
+      })
+      .catch(function (e) {
+        console.warn('Guardado parcial pendiente:', e);
+      })
+      .finally(function () {
+        if (state.inFlightSave === p) state.inFlightSave = null;
+      });
+    state.inFlightSave = p;
+  }
+
   function toExtra() {
     var pending = state.extras.filter(function (x) { return !x.decision; }).length;
     if (pending) {
@@ -445,12 +630,16 @@
     var warns = document.querySelectorAll('#rx-form .invalid').length;
     if (warns && !confirm('Hay ' + warns + ' valor(es) con advertencias. ¿Continuar igual?')) return;
     setError('#review-error', '');
-    var paciente = (collectRx().paciente || '').trim();
+
+    markStep('paso2Sec');
+    var rxValues = collectRx();
+    var paciente = (rxValues.paciente || '').trim();
     var nameInput = $('#extra-form').elements[C.PHOTO_NAME_FIELD];
     if (nameInput && paciente && (!nameInput.value.trim() || nameInput.value === state.prefilledName)) {
       nameInput.value = paciente;
       state.prefilledName = paciente;
     }
+    saveIncompleteInBackground(rxValues);
     go('extra');
     var first = $('#extra-fields input, #extra-fields textarea');
     if (first) first.focus();
@@ -488,16 +677,17 @@
           opt.textContent = o || '— Elegir —';
           el.appendChild(opt);
         });
-        el.addEventListener('change', syncConditionalFields);
+        el.addEventListener('change', function () { syncConditionalFields(); saveDraft(); });
       } else {
         el = document.createElement('input');
         el.type = f.type || 'text';
       }
       el.name = f.key;
       el.dataset.label = f.label;
+      el.autocomplete = 'off';
       if (f.required) el.required = true;
-      if (f.autocomplete) el.autocomplete = f.autocomplete;
       el.maxLength = f.type === 'textarea' ? 1000 : 200;
+      el.addEventListener('input', saveDraft);
       label.appendChild(span);
       label.appendChild(el);
       root.appendChild(label);
@@ -520,6 +710,14 @@
     });
   }
 
+  function collectExtraFields() {
+    var form = $('#extra-form');
+    return C.EXTRA_FIELDS.map(function (f) {
+      var el = form.elements[f.key];
+      return { key: f.key, label: f.label, value: (el && !el.disabled) ? el.value.trim() : '' };
+    });
+  }
+
   // ---------- Presupuesto (Paso 4) ----------
 
   function esc(s) {
@@ -539,13 +737,12 @@
 
   async function ensureCatalog() {
     if (state.catalogLoaded) return;
-    loading(true, 'Cargando catálogo de cristales…');
+    loading(true, 'Cargando catálogo y medios de pago…');
     try {
       var res = await withAuth(function (t) { return Api.catalog(t); });
-      if (res && Array.isArray(res.items) && res.items.length) {
-        state.catalog = res.items;
-        state.catalogLoaded = true;
-      }
+      if (res && Array.isArray(res.items) && res.items.length) state.catalog = res.items;
+      if (res && res.paymentConfig) state.paymentConfig = res.paymentConfig;
+      state.catalogLoaded = true;
     } catch (e) {
       toast('Usando catálogo base local (' + e.message + ')');
     } finally {
@@ -562,6 +759,7 @@
     });
     if (!form.reportValidity()) return;
     setError('#extra-error', '');
+    markStep('paso3Sec');
     await ensureCatalog();
     var rx = collectRx();
     if (!state.quoteInitialized) {
@@ -584,15 +782,24 @@
     return orig;
   }
 
-  function syncEyeCard(eye, eyeRx) {
+  function syncEyeCard(eye, eyeRx, pairMinRank) {
     var sel = state.quote[eye];
     var uso = state.quote.uso;
-    var stockCheck = Q.canEyeUseStock(eyeRx, uso);
+    var eyeTier = Q.getEyeMinTier(eyeRx, uso);
+    var reqRank = Math.max(eyeTier.rank, pairMinRank || 1);
 
     $('#q-rx-' + eye).textContent = formatEyeRxLine(eyeRx);
     var badge = $('#q-badge-' + eye);
-    badge.className = 'badge ' + (stockCheck.ok ? 'stock' : 'lab');
-    badge.textContent = stockCheck.ok ? 'Apto Stock y Lab' : 'Solo Laboratorio: ' + stockCheck.reason;
+    if (reqRank === 3) {
+      badge.className = 'badge lab';
+      badge.textContent = eyeTier.rank === 3 ? ('Solo Laboratorio: ' + eyeTier.reason) : 'Laboratorio (por otro ojo)';
+    } else if (reqRank === 2) {
+      badge.className = 'badge ext';
+      badge.textContent = eyeTier.rank === 2 ? 'Rango Extendido o Lab' : 'Rango Extendido o Lab (por otro ojo)';
+    } else {
+      badge.className = 'badge stock';
+      badge.textContent = 'Apto Stock, Rango Ext. y Lab';
+    }
 
     var select = $('#q-prod-' + eye);
     select.innerHTML = '';
@@ -603,7 +810,7 @@
 
     var stillValid = false;
     state.catalog.forEach(function (p) {
-      var chk = Q.checkProductForEye(p, eyeRx, uso);
+      var chk = Q.checkProductForEye(p, eyeRx, uso, reqRank);
       if (!chk.allowed) return;
       var opt = document.createElement('option');
       opt.value = p.codigo;
@@ -630,10 +837,14 @@
     var isManual = sel.mode === 'manual';
     $('#q-manual-' + eye).hidden = !isManual;
     var tipoSel = $('#q-man-tipo-' + eye);
-    var stockOpt = tipoSel.querySelector('option[value="Stock"]');
-    stockOpt.hidden = !stockCheck.ok;
-    stockOpt.disabled = !stockCheck.ok;
-    if (!stockCheck.ok && sel.manual.tipo === 'Stock') sel.manual.tipo = 'Laboratorio';
+    var optStk = tipoSel.querySelector('option[value="Stock"]');
+    var optExt = tipoSel.querySelector('option[value="Rango Extendido"]');
+    optStk.hidden = reqRank > 1;
+    optStk.disabled = reqRank > 1;
+    optExt.hidden = reqRank > 2;
+    optExt.disabled = reqRank > 2;
+    if (reqRank === 3) sel.manual.tipo = 'Laboratorio';
+    else if (reqRank === 2 && sel.manual.tipo === 'Stock') sel.manual.tipo = 'Rango Extendido';
 
     $('#q-man-nombre-' + eye).value = sel.manual.nombre;
     tipoSel.value = sel.manual.tipo;
@@ -654,8 +865,12 @@
     $('#q-card-oi').hidden = q.eyesMode === 'od';
 
     var eff = Q.resolveEffectiveRx(collectRx(), q.uso);
-    syncEyeCard('od', eff.od);
-    syncEyeCard('oi', eff.oi);
+    var tOd = Q.getEyeMinTier(eff.od, q.uso).rank;
+    var tOi = Q.getEyeMinTier(eff.oi, q.uso).rank;
+    var pairMinRank = q.eyesMode === 'both' ? Math.max(tOd, tOi) : 1;
+
+    syncEyeCard('od', eff.od, q.eyesMode === 'both' ? pairMinRank : tOd);
+    syncEyeCard('oi', eff.oi, q.eyesMode === 'both' ? pairMinRank : tOi);
 
     $('#q-frame-mode').value = q.frameModeSelect;
     $('#q-frame-rim').value = q.frame.rimType;
@@ -664,6 +879,7 @@
     $('#q-discount').value = String(q.discount || 0);
     $('#q-discount-note').value = q.discountNote || '';
     $('#q-deposit').value = String(q.deposit || 0);
+    $('#btn-to-close').hidden = !state.budgetIssued;
     syncFrameVisibility();
     refreshQuotePreview();
   }
@@ -691,21 +907,47 @@
   function onEyeSelectChange(eye) {
     var val = $('#q-prod-' + eye).value;
     var sel = state.quote[eye];
+    var eff = Q.resolveEffectiveRx(collectRx(), state.quote.uso);
+    var tOd = Q.getEyeMinTier(eff.od, state.quote.uso).rank;
+    var tOi = Q.getEyeMinTier(eff.oi, state.quote.uso).rank;
+    var pairMinRank = state.quote.eyesMode === 'both' ? Math.max(tOd, tOi) : (eye === 'od' ? tOd : tOi);
+
     if (val === '__manual__') {
       sel.mode = 'manual';
       sel.codigo = '';
       sel.manual.diseno = Q.USO_TO_DISENO[state.quote.uso] || 'Monofocal';
-      if (sel.manual.diseno !== 'Monofocal') sel.manual.tipo = 'Laboratorio';
+      if (sel.manual.diseno !== 'Monofocal' || pairMinRank === 3) sel.manual.tipo = 'Laboratorio';
+      else if (pairMinRank === 2) sel.manual.tipo = 'Rango Extendido';
     } else {
       sel.mode = 'catalog';
       sel.codigo = val;
       var prod = state.catalog.find(function (p) { return p.codigo === val; });
       sel.price = prod ? prod.precioMedioPar : 0;
-      $('#q-price-' + eye).value = sel.price ? String(sel.price) : '';
+
+      // En ambos ojos, sincronizar el rango (Stock / Rango Extendido / Laboratorio) del otro ojo si difiere.
+      if (state.quote.eyesMode === 'both' && prod) {
+        var otherEye = eye === 'od' ? 'oi' : 'od';
+        var otherSel = state.quote[otherEye];
+        var otherProd = Q.resolveEyeProduct(otherSel, state.catalog);
+        if (!otherProd || otherProd.tipo !== prod.tipo) {
+          if (otherSel.mode === 'manual') {
+            otherSel.manual.tipo = prod.tipo;
+          } else {
+            var sameOk = Q.checkProductForEye(prod, eff[otherEye], state.quote.uso, pairMinRank).allowed;
+            var match = sameOk ? prod : state.catalog.find(function (p) {
+              return p.tipo === prod.tipo && Q.checkProductForEye(p, eff[otherEye], state.quote.uso, pairMinRank).allowed;
+            });
+            if (match) {
+              otherSel.mode = 'catalog';
+              otherSel.codigo = match.codigo;
+              otherSel.price = match.precioMedioPar;
+            }
+          }
+        }
+      }
     }
-    var eff = Q.resolveEffectiveRx(collectRx(), state.quote.uso);
-    syncEyeCard(eye, eff[eye]);
-    refreshQuotePreview();
+    syncQuoteControls();
+    saveDraft();
   }
 
   function readManualAndPrice(eye) {
@@ -717,6 +959,15 @@
     sel.manual.tratamiento = $('#q-man-trat-' + eye).value;
     sel.manual.saveToCatalog = $('#q-man-save-' + eye).checked;
     sel.price = Math.max(0, Number($('#q-price-' + eye).value) || 0);
+    if (state.quote.eyesMode === 'both' && sel.mode === 'manual') {
+      var otherEye = eye === 'od' ? 'oi' : 'od';
+      var otherProd = Q.resolveEyeProduct(state.quote[otherEye], state.catalog);
+      if (state.quote[otherEye].mode === 'manual' && otherProd && otherProd.tipo !== sel.manual.tipo) {
+        state.quote[otherEye].manual.tipo = sel.manual.tipo;
+        $('#q-man-tipo-' + otherEye).value = sel.manual.tipo;
+      }
+    }
+    saveDraft();
   }
 
   function frameSummaryText() {
@@ -729,10 +980,9 @@
     return parts.filter(Boolean).join(' · ');
   }
 
-  function describeEyeItem(eye, prod) {
+  function describeEyeItem(prod) {
     if (!prod || !prod.nombre) return 'Sin seleccionar';
-    var parts = [prod.nombre, '[' + prod.tipo + (prod.indice ? ' · ' + prod.indice : '') + (prod.tratamiento ? ' · ' + prod.tratamiento : '') + ']'];
-    return parts.join(' ');
+    return prod.nombre + ' [' + prod.tipo + (prod.indice ? ' · ' + prod.indice : '') + (prod.tratamiento ? ' · ' + prod.tratamiento : '') + ']';
   }
 
   function buildQuoteSnapshot() {
@@ -741,7 +991,7 @@
     var q = state.quote;
     var eff = Q.resolveEffectiveRx(rx, q.uso);
     var validation = Q.validateQuote(rx, q, state.catalog);
-    var totals = Q.calculateTotals(q, C.PAYMENT_CONFIG);
+    var totals = Q.calculateTotals(q, state.paymentConfig || C.PAYMENT_CONFIG);
     var prodOd = q.eyesMode !== 'oi' ? Q.resolveEyeProduct(q.od, state.catalog) : null;
     var prodOi = q.eyesMode !== 'od' ? Q.resolveEyeProduct(q.oi, state.catalog) : null;
 
@@ -778,26 +1028,13 @@
     var t = snap.totals;
     var usoLabels = { lejos: 'Lejos', cerca: 'Cerca', multifocal: 'Multifocal', bifocal: 'Bifocal', ocupacional: 'Ocupacional' };
     var usoLabel = usoLabels[q.uso] || q.uso;
-    var hasTransposed = (q.eyesMode !== 'oi' && snap.eff.od.transposed) || (q.eyesMode !== 'od' && snap.eff.oi.transposed);
-
-    var rxRows = ['od', 'oi'].map(function (eye) {
-      var er = snap.eff[eye];
-      var mark = (eye === 'od' && q.eyesMode === 'oi') || (eye === 'oi' && q.eyesMode === 'od') ? ' (No cotiz.)' : '';
-      return '<tr><th>' + eye.toUpperCase() + mark + '</th>' +
-        '<td>' + esc(Q.fmtDiopter(er.esf_t)) + '</td>' +
-        '<td>' + esc(Q.fmtDiopter(er.cil_t)) + '</td>' +
-        '<td>' + esc(Q.fmtAxis(er.eje_t)) + '</td>' +
-        '<td>' + esc(er.add ? Q.fmtDiopter(er.add) : '—') + '</td>' +
-        '<td>' + esc(snap.eff.dip || '—') + '</td>' +
-        '<td>' + esc(snap.eff.prisma || '—') + '</td></tr>';
-    }).join('');
 
     var itemRows = '';
     if (q.eyesMode !== 'oi') {
-      itemRows += '<tr><td class="left"><b>½ Par OD:</b> ' + esc(describeEyeItem('od', snap.prodOd)) + '</td><td class="right">' + esc(Q.fmtMoney(t.odPrice)) + '</td></tr>';
+      itemRows += '<tr><td class="left"><b>½ Par OD:</b> ' + esc(describeEyeItem(snap.prodOd)) + '</td><td class="right">' + esc(Q.fmtMoney(t.odPrice)) + '</td></tr>';
     }
     if (q.eyesMode !== 'od') {
-      itemRows += '<tr><td class="left"><b>½ Par OI:</b> ' + esc(describeEyeItem('oi', snap.prodOi)) + '</td><td class="right">' + esc(Q.fmtMoney(t.oiPrice)) + '</td></tr>';
+      itemRows += '<tr><td class="left"><b>½ Par OI:</b> ' + esc(describeEyeItem(snap.prodOi)) + '</td><td class="right">' + esc(Q.fmtMoney(t.oiPrice)) + '</td></tr>';
     }
     if (q.frame.mode !== 'none') {
       itemRows += '<tr><td class="left"><b>Armazón:</b> ' + esc(frameSummaryText()) + '</td><td class="right">' +
@@ -813,6 +1050,10 @@
       itemRows += '<tr><td class="left"><b>Saldo a financiar / abonar</b></td><td class="right"><b>' + esc(Q.fmtMoney(t.balanceBase)) + '</b></td></tr>';
     }
 
+    var maxPriceNote = (q.eyesMode === 'both' && t.rawOdPrice !== t.rawOiPrice && t.odPrice > 0)
+      ? '<p class="qs-note">Graduación más alta define el valor aplicado a ambos cristales (' + esc(Q.fmtMoney(t.odPrice)) + ' c/u).</p>'
+      : '';
+
     var cardText = t.cardOptions.map(function (c) {
       return c.cuotas === 1 ? '1× ' + Q.fmtMoney(c.total) : c.cuotas + '× ' + Q.fmtMoney(c.cuotaMensual) + ' (Tot ' + Q.fmtMoney(c.total) + ')';
     }).join(' · ');
@@ -822,9 +1063,10 @@
         '<span><b>' + esc(Q.fmtMoney(p.cuotaMensual)) + '/mes</b><div class="qs-pay-sub">Total financiado: ' + esc(Q.fmtMoney(p.total)) + '</div></span></div>';
     }).join('');
 
+    // Sin tabla de graduación para el cliente (regla #3: oculta al imprimir/enviar, guardada en Sheets).
     $('#quote-sheet').innerHTML =
       '<div class="qs-head"><div><div class="qs-title">' + esc(C.OPTICA_NAME || 'Óptica') + '</div>' +
-      '<div class="qs-sub">Ficha Técnica y Presupuesto · Uso: ' + esc(usoLabel) + '</div></div>' +
+      '<div class="qs-sub">Presupuesto · Uso: ' + esc(usoLabel) + '</div></div>' +
       '<div class="qs-sub">Fecha: ' + esc(snap.fechaStr) + '<br>Válido hasta: ' + esc(snap.validaStr) + '</div></div>' +
       '<div class="qs-meta">' +
       '<div><b>Cliente:</b> ' + esc(snap.extra.nombre || snap.rx.paciente || '—') + '</div>' +
@@ -832,11 +1074,9 @@
       '<div><b>Médico:</b> ' + esc([snap.rx.medico, snap.rx.matricula].filter(Boolean).join(' · ') || '—') + '</div>' +
       '<div><b>Vendedor:</b> ' + esc(snap.extra.vendedor || '—') + '</div>' +
       '</div>' +
-      '<table class="qs-table"><thead><tr><th>Ojo</th><th>Esf</th><th>Cil</th><th>Eje</th><th>Add</th><th>DIP</th><th>Prisma</th></tr></thead>' +
-      '<tbody>' + rxRows + '</tbody></table>' +
-      (hasTransposed ? '<p class="qs-note">Graduación expresada en cilindro negativo estándar de laboratorio.</p>' : '') +
       '<table class="qs-table"><thead><tr><th class="left">Detalle (cotización por ½ par)</th><th class="right">Importe</th></tr></thead>' +
       '<tbody>' + itemRows + '</tbody></table>' +
+      maxPriceNote +
       '<div class="qs-pay"><h4>Medios de pago' + (t.depositAmount > 0 ? ' (sobre saldo)' : '') + '</h4>' +
       '<div class="qs-pay-row highlight"><span>Efectivo (' + t.cashDiscountPct + '% desc.)</span><span>' + esc(Q.fmtMoney(t.cashTotal)) + '</span></div>' +
       '<div class="qs-pay-row"><span>Transferencia bancaria</span><span>' + esc(Q.fmtMoney(t.transferTotal)) + '</span></div>' +
@@ -855,8 +1095,8 @@
     var usoLabels = { lejos: 'Lejos', cerca: 'Cerca', multifocal: 'Multifocal', bifocal: 'Bifocal', ocupacional: 'Ocupacional' };
 
     var lines = [];
-    if (q.eyesMode !== 'oi') lines.push(['½ Par OD: ' + describeEyeItem('od', snap.prodOd), Q.fmtMoney(t.odPrice)]);
-    if (q.eyesMode !== 'od') lines.push(['½ Par OI: ' + describeEyeItem('oi', snap.prodOi), Q.fmtMoney(t.oiPrice)]);
+    if (q.eyesMode !== 'oi') lines.push(['½ Par OD: ' + describeEyeItem(snap.prodOd), Q.fmtMoney(t.odPrice)]);
+    if (q.eyesMode !== 'od') lines.push(['½ Par OI: ' + describeEyeItem(snap.prodOi), Q.fmtMoney(t.oiPrice)]);
     if (q.frame.mode !== 'none') lines.push(['Armazón: ' + frameSummaryText(), q.frame.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice)]);
     if (t.discountAmount > 0) lines.push(['Descuento / OS' + (q.discountNote ? ' (' + q.discountNote + ')' : ''), '- ' + Q.fmtMoney(t.discountAmount)]);
     lines.push(['Total de lista', Q.fmtMoney(t.listTotal), true]);
@@ -865,7 +1105,7 @@
       lines.push(['Saldo a abonar', Q.fmtMoney(t.balanceBase), true]);
     }
 
-    var H = 560 + lines.length * 38 + t.cristalinoOptions.length * 42;
+    var H = 430 + lines.length * 38 + t.cristalinoOptions.length * 42;
     var canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
@@ -893,28 +1133,7 @@
     ctx.font = '16px system-ui, sans-serif';
     ctx.fillText('Vendedor: ' + (snap.extra.vendedor || '—') + '   ·   Médico: ' + ([snap.rx.medico, snap.rx.matricula].filter(Boolean).join(' ') || '—'), pad, y + 26);
 
-    y += 52;
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(pad, y, W - pad * 2, 102);
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.strokeRect(pad, y, W - pad * 2, 102);
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 15px monospace';
-    ctx.fillText('OJO   ESF      CIL      EJE    ADD      DIP   PRISMA', pad + 16, y + 28);
-    ctx.font = '16px monospace';
-    ['od', 'oi'].forEach(function (eye, idx) {
-      var er = snap.eff[eye];
-      var rowTxt = eye.toUpperCase().padEnd(6, ' ') +
-        Q.fmtDiopter(er.esf_t).padEnd(9, ' ') +
-        Q.fmtDiopter(er.cil_t).padEnd(9, ' ') +
-        Q.fmtAxis(er.eje_t).padEnd(7, ' ') +
-        (er.add ? Q.fmtDiopter(er.add) : '—').padEnd(9, ' ') +
-        (snap.eff.dip || '—').padEnd(6, ' ') +
-        (snap.eff.prisma || '—');
-      ctx.fillText(rowTxt, pad + 16, y + 58 + idx * 28);
-    });
-
-    y += 134;
+    y += 66;
     lines.forEach(function (ln) {
       ctx.font = ln[2] ? 'bold 18px system-ui, sans-serif' : '16px system-ui, sans-serif';
       ctx.fillStyle = '#0f172a';
@@ -1003,26 +1222,10 @@
     toast('Imagen descargada (' + fileName + '). Adjuntala en WhatsApp.');
   }
 
-  async function save() {
-    setError('#quote-error', '');
+  function buildBudgetSavePayload() {
     var snap = buildQuoteSnapshot();
-    if (snap.validation.errors.length) {
-      setError('#quote-error', snap.validation.errors[0]);
-      $('#quote-alerts').scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return;
-    }
-    if (snap.validation.warnings.length) {
-      var ok = confirm('Advertencias técnicas:\n• ' + snap.validation.warnings.join('\n• ') + '\n\n¿Guardar igualmente?');
-      if (!ok) return;
-    }
-
-    var form = $('#extra-form');
-    var extraFields = C.EXTRA_FIELDS.map(function (f) {
-      var el = form.elements[f.key];
-      return { key: f.key, label: f.label, value: (el && !el.disabled) ? el.value.trim() : '' };
-    });
+    var extraFields = collectExtraFields();
     var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
-    var rxValues = snap.rx;
     var q = state.quote;
     var t = snap.totals;
 
@@ -1052,67 +1255,233 @@
       return p.cuotas + '×' + Q.fmtMoney(p.cuotaMensual) + ' (' + Q.fmtMoney(p.total) + ')';
     }).join(' | ');
 
-    var quoteSummary = {
-      uso: q.uso,
-      eyesMode: q.eyesMode,
-      odNombre: q.eyesMode === 'oi' ? '' : (snap.prodOd ? snap.prodOd.nombre : ''),
-      odTipo: q.eyesMode === 'oi' ? '' : (snap.prodOd ? snap.prodOd.tipo : ''),
-      odPrecio: q.eyesMode === 'oi' ? '' : String(t.odPrice),
-      oiNombre: q.eyesMode === 'od' ? '' : (snap.prodOi ? snap.prodOi.nombre : ''),
-      oiTipo: q.eyesMode === 'od' ? '' : (snap.prodOi ? snap.prodOi.tipo : ''),
-      oiPrecio: q.eyesMode === 'od' ? '' : String(t.oiPrice),
-      armazon: q.frame.mode === 'none' ? '' : frameSummaryText(),
-      armazonPrecio: String(t.framePrice),
-      descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
-      sena: String(t.depositAmount),
-      totalLista: String(t.listTotal),
-      totalEfectivo: String(t.cashTotal),
-      planCristalino: cristalinoTxt
+    return {
+      newCatalogItems: newCatalogItems,
+      payload: {
+        uuid: state.uuid,
+        stage: 'presupuestado',
+        image: state.photoUploaded ? '' : state.image,
+        photoName: nameField ? nameField.value : '',
+        rx: snap.rx,
+        extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
+          .map(function (x) { return x.texto.trim(); }),
+        extraFields: extraFields,
+        isRx: !(state.ocr.rx && state.ocr.rx.es_receta_optica === false),
+        corrected: wasCorrected(snap.rx),
+        quoteSummary: {
+          uso: q.uso,
+          eyesMode: q.eyesMode,
+          odNombre: q.eyesMode === 'oi' ? '' : (snap.prodOd ? snap.prodOd.nombre : ''),
+          odTipo: q.eyesMode === 'oi' ? '' : (snap.prodOd ? snap.prodOd.tipo : ''),
+          odPrecio: q.eyesMode === 'oi' ? '' : String(t.odPrice),
+          oiNombre: q.eyesMode === 'od' ? '' : (snap.prodOi ? snap.prodOi.nombre : ''),
+          oiTipo: q.eyesMode === 'od' ? '' : (snap.prodOi ? snap.prodOi.tipo : ''),
+          oiPrecio: q.eyesMode === 'od' ? '' : String(t.oiPrice),
+          armazon: q.frame.mode === 'none' ? '' : frameSummaryText(),
+          armazonPrecio: String(t.framePrice),
+          descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
+          sena: String(t.depositAmount),
+          totalLista: String(t.listTotal),
+          totalEfectivo: String(t.cashTotal),
+          planCristalino: cristalinoTxt
+        },
+        timings: buildTimingsPayload()
+      }
     };
+  }
 
-    var payload = {
-      uuid: state.uuid,
-      image: state.image,
-      photoName: nameField ? nameField.value : '',
-      rx: rxValues,
-      extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
-        .map(function (x) { return x.texto.trim(); }),
-      extraFields: extraFields,
-      isRx: !(state.ocr.rx && state.ocr.rx.es_receta_optica === false),
-      corrected: wasCorrected(rxValues),
-      raw: state.ocr.raw || '',
-      quoteSummary: quoteSummary,
-      newCatalogItems: newCatalogItems
-    };
+  async function saveBudgetAndThen(mode) {
+    setError('#quote-error', '');
+    var snap = buildQuoteSnapshot();
+    if (snap.validation.errors.length) {
+      setError('#quote-error', snap.validation.errors[0]);
+      $('#quote-alerts').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (snap.validation.warnings.length) {
+      var ok = confirm('Advertencias técnicas:\n• ' + snap.validation.warnings.join('\n• ') + '\n\n¿Continuar igualmente?');
+      if (!ok) return;
+    }
 
-    $('#btn-save').disabled = true;
-    loading(true, 'Guardando en Drive y Sheets…');
+    if (state.inFlightSave) await state.inFlightSave;
+    markStep('paso4Sec');
+    var built = buildBudgetSavePayload();
+
+    $('#btn-print-quote').disabled = true;
+    $('#btn-share-quote').disabled = true;
+    loading(true, 'Guardando presupuesto en Drive y Sheets…');
+    var res = null;
     try {
-      var res = await withAuth(function (tok) { return Api.save(Object.assign({ idToken: tok }, payload)); });
-      if (newCatalogItems.length) state.catalogLoaded = false;
-      showDone(res);
+      res = await withAuth(function (tok) { return Api.save(Object.assign({ idToken: tok }, built.payload)); });
+      state.photoUploaded = true;
+      state.budgetIssued = true;
+      state.lastResult = res;
+      if (built.newCatalogItems.length) state.catalogLoaded = false;
+      $('#btn-to-close').hidden = false;
+      saveDraft();
     } catch (e) {
-      setError('#quote-error', e.message + ' (podés reintentar: no se duplica)');
+      setError('#quote-error', e.message + ' (reintentá sin riesgo de duplicar fila)');
+      return;
     } finally {
       loading(false);
-      $('#btn-save').disabled = false;
+      $('#btn-print-quote').disabled = false;
+      $('#btn-share-quote').disabled = false;
     }
+
+    if (mode === 'print') {
+      window.print();
+    } else {
+      await shareOrDownloadQuoteImage();
+    }
+    showDone(res);
+  }
+
+  // ---------- Cierre de venta (Paso 5) ----------
+
+  function syncCloseFields() {
+    var soldVal = ($('#close-form').elements.sold && $('#close-form').elements.sold.value) || '';
+    var isYes = soldVal === 'si';
+    var isNo = soldVal === 'no';
+    $('#close-yes-fields').hidden = !isYes;
+    $('#close-no-fields').hidden = !isNo;
+    ['#c-ot', '#c-monto', '#c-tipo-lente'].forEach(function (id) {
+      var el = $(id);
+      el.disabled = !isYes;
+      el.required = isYes;
+      if (!isYes) el.value = '';
+    });
+    var mot = $('#c-motivo');
+    mot.disabled = !isNo;
+    mot.required = isNo;
+    if (!isNo) mot.value = '';
   }
 
   function showDone(res) {
+    res = res || {};
     var parts = [];
-    if (res.duplicate) parts.push('Ya estaba guardada (fila ' + res.fila + ').');
-    else parts.push('Fila ' + res.fila + ' del Sheet.');
+    if (res.fila) parts.push('Fila ' + res.fila + ' del Sheet.');
     if (res.fotoNombre) parts.push('Foto: ' + res.fotoNombre);
     if (res.demo) parts.push('(Demo: no se guardó nada)');
     $('#done-detail').textContent = parts.join(' ');
     var link = $('#done-link');
     link.hidden = !res.fotoUrl;
     if (res.fotoUrl) link.href = res.fotoUrl;
+    $('#close-form').reset();
+    syncCloseFields();
+    setError('#close-error', '');
     go('done');
   }
 
+  async function submitClose(ev) {
+    ev.preventDefault();
+    var form = $('#close-form');
+    ['#c-ot', '#c-tipo-lente', '#c-motivo'].forEach(function (id) {
+      var el = $(id);
+      if (el && !el.disabled) el.value = el.value.trim();
+    });
+    if (!form.reportValidity()) return;
+    setError('#close-error', '');
+
+    if (state.inFlightSave) await state.inFlightSave;
+    markStep('cierreSec');
+    var sold = form.elements.sold.value === 'si';
+    var extraFields = collectExtraFields();
+    var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
+    var payload = {
+      uuid: state.uuid,
+      stage: 'cerrado',
+      image: state.photoUploaded ? '' : state.image,
+      photoName: nameField ? nameField.value : '',
+      closure: sold ? {
+        sold: true,
+        ot: $('#c-ot').value.trim(),
+        monto: Number($('#c-monto').value) || 0,
+        tipoLente: $('#c-tipo-lente').value.trim(),
+        motivo: ''
+      } : {
+        sold: false,
+        ot: '',
+        monto: '',
+        tipoLente: '',
+        motivo: $('#c-motivo').value.trim()
+      },
+      timings: buildTimingsPayload()
+    };
+
+    $('#btn-close-submit').disabled = true;
+    loading(true, 'Registrando cierre de venta…');
+    try {
+      await withAuth(function (tok) { return Api.save(Object.assign({ idToken: tok }, payload)); });
+      clearDraft();
+      resetFlow();
+      go('capture');
+      toast('Cierre registrado correctamente.');
+    } catch (e) {
+      setError('#close-error', e.message + ' (reintentá)');
+    } finally {
+      loading(false);
+      $('#btn-close-submit').disabled = false;
+    }
+  }
+
+  // ---------- Abandonar Presupuesto ----------
+
+  function openAbandonModal() {
+    $('#abandon-reason').value = '';
+    setError('#abandon-error', '');
+    $('#abandon-modal').hidden = false;
+    $('#abandon-reason').focus();
+  }
+
+  async function submitAbandon(ev) {
+    ev.preventDefault();
+    var reasonEl = $('#abandon-reason');
+    reasonEl.value = reasonEl.value.trim();
+    if (!$('#abandon-form').reportValidity()) return;
+    setError('#abandon-error', '');
+
+    if (state.inFlightSave) await state.inFlightSave;
+    markStep(stepKeyForScreen(state.screen));
+
+    var rxValues = collectRx();
+    var extraFields = collectExtraFields();
+    var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
+    var photoName = (nameField && nameField.value) || (rxValues.paciente || '').trim() || 'Pendiente';
+
+    var payload = {
+      uuid: state.uuid,
+      stage: 'abandonado',
+      image: state.photoUploaded ? '' : state.image,
+      photoName: photoName,
+      rx: rxValues,
+      extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
+        .map(function (x) { return x.texto.trim(); }),
+      extraFields: extraFields,
+      isRx: !(state.ocr && state.ocr.rx && state.ocr.rx.es_receta_optica === false),
+      corrected: state.ocr ? wasCorrected(rxValues) : false,
+      closure: { motivo: reasonEl.value },
+      timings: buildTimingsPayload()
+    };
+
+    $('#btn-abandon-confirm').disabled = true;
+    loading(true, 'Guardando presupuesto abandonado…');
+    try {
+      await withAuth(function (tok) { return Api.save(Object.assign({ idToken: tok }, payload)); });
+      $('#abandon-modal').hidden = true;
+      clearDraft();
+      resetFlow();
+      go('capture');
+      toast('Presupuesto guardado como ABANDONADO.');
+    } catch (e) {
+      setError('#abandon-error', e.message + ' (reintentá)');
+    } finally {
+      loading(false);
+      $('#btn-abandon-confirm').disabled = false;
+    }
+  }
+
   function resetFlow() {
+    clearDraft();
     state.image = null;
     state.ocr = null;
     state.extras = [];
@@ -1120,9 +1489,15 @@
     state.uuid = null;
     state.prefilledName = '';
     state.quoteInitialized = false;
+    state.budgetIssued = false;
+    state.photoUploaded = false;
+    state.lastResult = null;
     state.quote = defaultQuoteState();
+    state.timers = defaultTimers();
     $('#extra-form').reset();
+    $('#close-form').reset();
     syncConditionalFields();
+    syncCloseFields();
     retake();
   }
 
@@ -1138,9 +1513,13 @@
   function bind() {
     $('#btn-demo-login').addEventListener('click', function () {
       setAuth({ token: 'demo', email: 'demo@ejemplo.com', exp: Date.now() / 1000 + 86400 });
-      go('capture');
+      if (!restoreDraftIfAny()) go('capture');
     });
     $('#btn-logout').addEventListener('click', logout);
+    $('#btn-abandon').addEventListener('click', openAbandonModal);
+    $('#btn-abandon-cancel').addEventListener('click', function () { $('#abandon-modal').hidden = true; });
+    $('#abandon-form').addEventListener('submit', submitAbandon);
+
     $('#in-camera').addEventListener('change', onFile);
     $('#in-file').addEventListener('change', onFile);
     $('#btn-retake').addEventListener('click', retake);
@@ -1153,11 +1532,16 @@
     $('#btn-back-review').addEventListener('click', function () { go('review'); });
     $('#extra-form').addEventListener('submit', toQuote);
     $('#btn-back-extra').addEventListener('click', function () { go('extra'); });
-    $('#btn-save').addEventListener('click', save);
-    $('#btn-print-quote').addEventListener('click', function () { window.print(); });
+    $('#btn-to-close').addEventListener('click', function () { showDone(state.lastResult || { fila: '—' }); });
+    $('#btn-print-quote').addEventListener('click', function () { saveBudgetAndThen('print'); });
+    $('#btn-share-quote').addEventListener('click', function () { saveBudgetAndThen('whatsapp'); });
     $('#btn-done-print').addEventListener('click', function () { window.print(); });
-    $('#btn-share-quote').addEventListener('click', shareOrDownloadQuoteImage);
     $('#btn-done-share').addEventListener('click', shareOrDownloadQuoteImage);
+
+    $('#close-form').addEventListener('change', function (e) {
+      if (e.target && e.target.name === 'sold') syncCloseFields();
+    });
+    $('#close-form').addEventListener('submit', submitClose);
 
     $('#q-uso').addEventListener('change', function () {
       state.quote.uso = $('#q-uso').value;
@@ -1169,10 +1553,12 @@
         state.quote.oi.manual.tipo = 'Laboratorio';
       }
       syncQuoteControls();
+      saveDraft();
     });
     $('#q-eyes').addEventListener('change', function () {
       state.quote.eyesMode = $('#q-eyes').value;
       syncQuoteControls();
+      saveDraft();
     });
     ['od', 'oi'].forEach(function (eye) {
       $('#q-prod-' + eye).addEventListener('change', function () { onEyeSelectChange(eye); });
@@ -1193,19 +1579,27 @@
       });
     });
 
-    $('#q-frame-mode').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); });
-    $('#q-frame-rim').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); });
-    $('#q-frame-detail').addEventListener('input', function () { state.quote.frame.detail = $('#q-frame-detail').value; refreshQuotePreview(); });
-    $('#q-frame-price').addEventListener('input', function () { state.quote.frame.price = Math.max(0, Number($('#q-frame-price').value) || 0); refreshQuotePreview(); });
-    $('#q-discount').addEventListener('input', function () { state.quote.discount = Math.max(0, Number($('#q-discount').value) || 0); refreshQuotePreview(); });
-    $('#q-discount-note').addEventListener('input', function () { state.quote.discountNote = $('#q-discount-note').value; refreshQuotePreview(); });
-    $('#q-deposit').addEventListener('input', function () { state.quote.deposit = Math.max(0, Number($('#q-deposit').value) || 0); refreshQuotePreview(); });
+    $('#q-frame-mode').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); saveDraft(); });
+    $('#q-frame-rim').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); saveDraft(); });
+    $('#q-frame-detail').addEventListener('input', function () { state.quote.frame.detail = $('#q-frame-detail').value; refreshQuotePreview(); saveDraft(); });
+    $('#q-frame-price').addEventListener('input', function () { state.quote.frame.price = Math.max(0, Number($('#q-frame-price').value) || 0); refreshQuotePreview(); saveDraft(); });
+    $('#q-discount').addEventListener('input', function () { state.quote.discount = Math.max(0, Number($('#q-discount').value) || 0); refreshQuotePreview(); saveDraft(); });
+    $('#q-discount-note').addEventListener('input', function () { state.quote.discountNote = $('#q-discount-note').value; refreshQuotePreview(); saveDraft(); });
+    $('#q-deposit').addEventListener('input', function () { state.quote.deposit = Math.max(0, Number($('#q-deposit').value) || 0); refreshQuotePreview(); saveDraft(); });
 
-    $('#btn-new').addEventListener('click', function () { resetFlow(); go('capture'); });
     window.addEventListener('beforeunload', function (e) {
-      if (state.screen === 'review' || state.screen === 'extra' || state.screen === 'quote') { e.preventDefault(); e.returnValue = ''; }
+      if (state.screen !== 'login' && (state.image || ['review', 'extra', 'quote', 'done'].indexOf(state.screen) >= 0)) {
+        saveDraft();
+        e.preventDefault();
+        e.returnValue = '';
+      }
     });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') $('#zoom').hidden = true; });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        $('#zoom').hidden = true;
+        $('#abandon-modal').hidden = true;
+      }
+    });
   }
 
   function registerSw() {
@@ -1217,6 +1611,7 @@
 
   bind();
   renderExtraForm();
+  syncCloseFields();
   go('login');
   initAuth();
   registerSw();

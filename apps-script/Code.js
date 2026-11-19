@@ -73,7 +73,7 @@ function cfg_() {
     folderId: p.DRIVE_FOLDER_ID || '',
     tz: p.TIMEZONE || TZ_DEFAULT,
     rateOcr: Number(p.RATE_OCR_PER_HOUR || 30),
-    rateSave: Number(p.RATE_SAVE_PER_HOUR || 30)
+    rateSave: Number(p.RATE_SAVE_PER_HOUR || 120)
   };
 }
 
@@ -136,41 +136,47 @@ function countFail_() {
   } catch (e) { /* no bloquear respuesta */ }
 }
 
-// ---------- Catálogo ----------
+// ---------- Catálogo y Medios de Pago ----------
 
-function ensureCatalogSheet_(ss) {
-  var sheet = ss.getSheetByName('Catalogo');
-  if (!sheet) {
-    sheet = ss.insertSheet('Catalogo');
-    var rows = [CATALOG_HEADERS].concat(SEED_CATALOG_ITEMS.map(catalogItemToRow));
-    sheet.getRange(1, 1, rows.length, CATALOG_HEADERS.length).setValues(rows);
-    sheet.getRange(1, 1, 1, CATALOG_HEADERS.length).setFontWeight('bold');
+function ensureConfigSheet_(ss, name, headers, seedRows) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) sheet = ss.insertSheet(name);
+  if (sheet.getLastRow() === 0) {
+    var rows = [headers].concat(seedRows);
+    sheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
     sheet.setFrozenRows(1);
-  } else if (sheet.getLastRow() === 0) {
-    var initRows = [CATALOG_HEADERS].concat(SEED_CATALOG_ITEMS.map(catalogItemToRow));
-    sheet.getRange(1, 1, initRows.length, CATALOG_HEADERS.length).setValues(initRows);
-    sheet.getRange(1, 1, 1, CATALOG_HEADERS.length).setFontWeight('bold');
-    sheet.setFrozenRows(1);
+    SpreadsheetApp.flush();
   }
   return sheet;
+}
+
+function ensureCatalogSheet_(ss) {
+  return ensureConfigSheet_(ss, 'Catalogo', CATALOG_HEADERS, SEED_CATALOG_ITEMS.map(catalogItemToRow));
+}
+
+function ensurePaymentSheet_(ss) {
+  return ensureConfigSheet_(ss, 'Medios_Pago', PAYMENT_HEADERS, SEED_PAYMENT_ROWS);
 }
 
 function handleCatalog_(user) {
   var c = cfg_();
   if (!c.sheetId) throw httpError_(500, 'Falta SHEET_ID');
   var cache = CacheService.getScriptCache();
-  var cached = cache.get('catalog_items');
-  if (cached) return { ok: true, items: JSON.parse(cached) };
+  var cached = cache.get('catalog_bundle');
+  if (cached) return JSON.parse(cached);
 
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
     var ss = SpreadsheetApp.openById(c.sheetId);
     var catSheet = ensureCatalogSheet_(ss);
-    var values = catSheet.getDataRange().getValues();
-    var items = parseCatalogRows(values);
-    cache.put('catalog_items', JSON.stringify(items), 300);
-    return { ok: true, items: items };
+    var paySheet = ensurePaymentSheet_(ss);
+    var items = parseCatalogRows(catSheet.getDataRange().getValues());
+    var paymentConfig = parsePaymentRows(paySheet.getDataRange().getValues());
+    var out = { ok: true, items: items, paymentConfig: paymentConfig };
+    cache.put('catalog_bundle', JSON.stringify(out), 300);
+    return out;
   } finally { lock.releaseLock(); }
 }
 
@@ -271,19 +277,20 @@ function handleOcr_(user, body) {
 
 // ---------- Guardado ----------
 
+function extractDriveId_(url) {
+  var m = /\/d\/([A-Za-z0-9_-]+)/.exec(String(url || '')) || /[?&]id=([A-Za-z0-9_-]+)/.exec(String(url || ''));
+  return m ? m[1] : '';
+}
+
 function handleSave_(user, body) {
   var c = cfg_();
   if (!c.sheetId || !c.folderId) throw httpError_(500, 'Falta SHEET_ID o DRIVE_FOLDER_ID');
   if (!isValidUuid(body.uuid)) throw httpError_(400, 'ID de envío inválido');
-  var name = sanitizeCell(body.photoName, 80);
-  if (!name) throw httpError_(400, 'Falta el nombre');
-  var img = image_(body.image);
+  var stage = String(body.stage || 'presupuestado').toLowerCase();
+  var name = sanitizeCell(body.photoName, 80) || 'Pendiente';
+  var img = body.image ? image_(body.image) : null;
 
   var cache = CacheService.getScriptCache();
-  var doneKey = 'saved_' + body.uuid;
-  var prev = cache.get(doneKey);
-  if (prev) return JSON.parse(prev);
-
   rateLimit_('save', user.email, c.rateSave);
 
   var lock = LockService.getScriptLock();
@@ -293,31 +300,72 @@ function handleSave_(user, body) {
     var sheet = c.sheetName ? ss.getSheetByName(c.sheetName) : ss.getSheets()[0];
     if (!sheet) throw httpError_(500, 'Hoja no encontrada');
 
-    // Idempotencia ante caché vencida: buscar UUID en la hoja.
-    var found = sheet.createTextFinder(body.uuid).matchEntireCell(true).findNext();
-    if (found) return { ok: true, duplicate: true, fila: found.getRow(), fotoUrl: '' };
-
     var now = new Date();
+    var nowStr = Utilities.formatDate(now, c.tz, 'yyyy-MM-dd HH:mm:ss');
     var stamp = Utilities.formatDate(now, c.tz, 'yyyy-MM-dd_HHmmss');
-    var fileName = buildPhotoFileName(stamp, name, img.mime);
-    var blob = Utilities.newBlob(Utilities.base64Decode(img.data), img.mime, fileName);
-    var file = DriveApp.getFolderById(c.folderId).createFile(blob);
-    file.setDescription('Subida por ' + user.email + ' · ' + body.uuid);
 
-    var rx = body.rx && typeof body.rx === 'object' ? body.rx : {};
-    var record = [
-      ['Timestamp', Utilities.formatDate(now, c.tz, 'yyyy-MM-dd HH:mm:ss')],
-      ['UUID', body.uuid],
-      ['Usuario', user.email]
-    ];
-    sanitizeExtraFields(body.extraFields).forEach(function (f) { record.push([f.label, f.value]); });
-    rxFields_().forEach(function (f) { record.push([f.label, toSheetValue(rx[f.key])]); });
-    var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
+    var lastCol = Math.max(sheet.getLastColumn(), 1);
+    var existingHeaders = sheet.getLastRow() ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+    var found = sheet.getLastRow() ? sheet.createTextFinder(body.uuid).matchEntireCell(true).findNext() : null;
+    var rowIdx = found ? found.getRow() : 0;
+    var existingRow = found ? sheet.getRange(rowIdx, 1, 1, lastCol).getValues()[0] : [];
+
+    var fotoCol = existingHeaders.indexOf('Foto');
+    var fotoUrl = (found && fotoCol >= 0) ? String(existingRow[fotoCol] || '') : '';
+    var fileName = '';
+
+    if (!fotoUrl) {
+      if (!img) throw httpError_(400, 'Falta la imagen');
+      fileName = buildPhotoFileName(stamp, name, img.mime);
+      var blob = Utilities.newBlob(Utilities.base64Decode(img.data), img.mime, fileName);
+      var file = DriveApp.getFolderById(c.folderId).createFile(blob);
+      file.setDescription('Subida por ' + user.email + ' · ' + body.uuid);
+      fotoUrl = file.getUrl();
+    } else if (name && name !== 'Pendiente') {
+      try {
+        var drvId = extractDriveId_(fotoUrl);
+        if (drvId) {
+          var drvFile = DriveApp.getFileById(drvId);
+          var curName = drvFile.getName();
+          if (/_(Pendiente|sin-nombre)\.(jpg|png)$/i.test(curName)) {
+            fileName = curName.replace(/_(Pendiente|sin-nombre)\.(jpg|png)$/i, '_' + normalizeName(name) + '.$2');
+            drvFile.setName(fileName);
+          } else {
+            fileName = curName;
+          }
+        }
+      } catch (e) { /* conservar URL si no se pudo renombrar */ }
+    }
+
+    var cData = body.closure && typeof body.closure === 'object' ? body.closure : null;
+    var statusLabel = 'PRESUPUESTADO';
+    if (stage === 'incompleto') statusLabel = 'INCOMPLETO';
+    else if (stage === 'abandonado') statusLabel = 'ABANDONADO';
+    else if (stage === 'cerrado') statusLabel = (cData && cData.sold) ? 'VENTA CONCRETADA' : 'NO CONCRETADA';
+
+    var record = [];
+    if (!found) record.push(['Timestamp', nowStr]);
     record.push(
-      ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
-      ['Es receta (IA)', body.isRx === false ? 'No' : 'Sí'],
-      ['Corregido por usuario', body.corrected ? 'Sí' : 'No']
+      ['Última actualización', nowStr],
+      ['UUID', body.uuid],
+      ['Usuario', user.email],
+      ['Estado', statusLabel]
     );
+
+    if (Array.isArray(body.extraFields) && body.extraFields.length) {
+      sanitizeExtraFields(body.extraFields).forEach(function (f) { record.push([f.label, f.value]); });
+    }
+    if (body.rx && typeof body.rx === 'object') {
+      var rx = body.rx;
+      rxFields_().forEach(function (f) { record.push([f.label, toSheetValue(rx[f.key])]); });
+      var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
+      record.push(
+        ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
+        ['Es receta (IA)', body.isRx === false ? 'No' : 'Sí'],
+        ['Corregido por usuario', body.corrected ? 'Sí' : 'No']
+      );
+    }
+
     var q = body.quoteSummary && typeof body.quoteSummary === 'object' ? body.quoteSummary : null;
     if (q) {
       record.push(
@@ -338,7 +386,31 @@ function handleSave_(user, body) {
         ['Plan Cristalino', sanitizeCell(q.planCristalino, 300)]
       );
     }
-    record.push(['Foto', file.getUrl()]);
+
+    if (cData) {
+      record.push(
+        ['Venta concretada', cData.sold === true ? 'Sí' : (cData.sold === false ? 'No' : '')],
+        ['Número OT', sanitizeCell(cData.ot, 60)],
+        ['Monto Venta', cData.monto !== '' && cData.monto != null ? toSheetValue(cData.monto, 30) : ''],
+        ['Tipo Lente Vendido', sanitizeCell(cData.tipoLente, 120)],
+        ['Motivo No Venta / Abandono', sanitizeCell(cData.motivo, 500)]
+      );
+    }
+
+    var tm = body.timings && typeof body.timings === 'object' ? body.timings : null;
+    if (tm) {
+      record.push(
+        ['Inicio Captura', sanitizeCell(tm.inicioIso, 40)],
+        ['Seg Paso 1 (OCR)', tm.paso1Sec != null ? toSheetValue(tm.paso1Sec, 20) : ''],
+        ['Seg Paso 2 (Revisión)', tm.paso2Sec != null ? toSheetValue(tm.paso2Sec, 20) : ''],
+        ['Seg Paso 3 (Datos)', tm.paso3Sec != null ? toSheetValue(tm.paso3Sec, 20) : ''],
+        ['Seg Paso 4 (Presupuesto)', tm.paso4Sec != null ? toSheetValue(tm.paso4Sec, 20) : ''],
+        ['Seg Cierre', tm.cierreSec != null ? toSheetValue(tm.cierreSec, 20) : ''],
+        ['Seg Totales', tm.totalSec != null ? toSheetValue(tm.totalSec, 20) : '']
+      );
+    }
+
+    record.push(['Foto', fotoUrl]);
 
     if (Array.isArray(body.newCatalogItems) && body.newCatalogItems.length) {
       var catSheet = ensureCatalogSheet_(ss);
@@ -349,27 +421,30 @@ function handleSave_(user, body) {
       });
       if (addedCat.length) {
         catSheet.getRange(catSheet.getLastRow() + 1, 1, addedCat.length, CATALOG_HEADERS.length).setValues(addedCat);
-        cache.remove('catalog_items');
+        cache.remove('catalog_bundle');
       }
     }
 
-    var lastCol = Math.max(sheet.getLastColumn(), 1);
-    var existing = sheet.getLastRow() ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-    var built = buildRow(existing, record);
+    var built = buildRow(existingHeaders, record, existingRow);
     if (built.added.length) {
       sheet.getRange(1, 1, 1, built.headers.length).setValues([built.headers]).setFontWeight('bold');
       if (!sheet.getFrozenRows()) sheet.setFrozenRows(1);
       SpreadsheetApp.flush();
     }
-    var rowIdx = Math.max(sheet.getLastRow(), 1) + 1;
-    var range = sheet.getRange(rowIdx, 1, 1, built.row.length);
+    var targetRow = found ? rowIdx : (Math.max(sheet.getLastRow(), 1) + 1);
+    var range = sheet.getRange(targetRow, 1, 1, built.row.length);
     range.setNumberFormat('General');
     range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     range.setValues([built.row]);
 
-    var result = { ok: true, fila: rowIdx, fotoUrl: file.getUrl(), fotoNombre: fileName };
-    cache.put(doneKey, JSON.stringify(result), 21600);
-    return result;
+    return {
+      ok: true,
+      fila: targetRow,
+      fotoUrl: fotoUrl,
+      fotoNombre: fileName,
+      estado: statusLabel,
+      updated: Boolean(found)
+    };
   } finally { lock.releaseLock(); }
 }
 
@@ -412,6 +487,9 @@ function setupCheck() {
     var catSheet = ensureCatalogSheet_(ss);
     var catCount = parseCatalogRows(catSheet.getDataRange().getValues()).length;
     out.push('Catalogo: OK (' + catCount + ' productos activos)');
+    var paySheet = ensurePaymentSheet_(ss);
+    var payCfg = parsePaymentRows(paySheet.getDataRange().getValues());
+    out.push('Medios_Pago: OK (' + payCfg.cardPlans.length + ' planes tarjeta, ' + payCfg.cristalinoPlans.length + ' planes Cristalino)');
   } catch (e) { out.push('Sheet/Catalogo: ERROR ' + e.message); }
   try { out.push('Carpeta: ' + DriveApp.getFolderById(c.folderId).getName()); } catch (e) { out.push('Carpeta: ERROR ' + e.message); }
   try {

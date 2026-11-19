@@ -15,6 +15,7 @@
   <header class="topbar">
     <div class="brand"><img src="icons/icon.svg" alt="" width="28" height="28"> Presupuestalino</div>
     <div id="user" class="user" hidden>
+      <button id="btn-abandon" class="btn-abandon" type="button" hidden>✕ Abandonar presupuesto</button>
       <span id="user-email"></span>
       <button id="btn-logout" class="link" type="button">Salir</button>
     </div>
@@ -27,7 +28,7 @@
     <li data-step="review"><span>2</span>Revisar</li>
     <li data-step="extra"><span>3</span>Datos</li>
     <li data-step="quote"><span>4</span>Presupuesto</li>
-    <li data-step="done"><span>✓</span>Listo</li>
+    <li data-step="done"><span>5</span>Cierre</li>
   </ol>
 
   <main>
@@ -103,7 +104,7 @@
 
     <!-- DATOS ADICIONALES -->
     <section id="screen-extra" class="screen" hidden>
-      <form id="extra-form" class="card narrow" novalidate>
+      <form id="extra-form" class="card narrow" autocomplete="off" novalidate>
         <h2>Datos adicionales</h2>
         <div id="extra-fields"></div>
         <div class="actions">
@@ -154,7 +155,7 @@
               <div id="q-manual-od" class="manual-box" hidden>
                 <label class="field"><span>Nombre / Descripción *</span><input id="q-man-nombre-od" type="text" maxlength="120" placeholder="Ej. Orgánico 1.60 Blue Cut"></label>
                 <div class="rx-list">
-                  <label class="field"><span>Tipo</span><select id="q-man-tipo-od"><option value="Stock">Stock</option><option value="Laboratorio">Laboratorio</option></select></label>
+                  <label class="field"><span>Tipo</span><select id="q-man-tipo-od"><option value="Stock">Stock</option><option value="Rango Extendido">Rango Extendido</option><option value="Laboratorio">Laboratorio</option></select></label>
                   <label class="field"><span>Diseño</span><select id="q-man-diseno-od"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>
                   <label class="field"><span>Índice</span><select id="q-man-indice-od"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>
                   <label class="field"><span>Tratamiento</span><input id="q-man-trat-od" type="text" maxlength="40" placeholder="Blanco / AR / Blue Cut / Foto"></label>
@@ -180,7 +181,7 @@
               <div id="q-manual-oi" class="manual-box" hidden>
                 <label class="field"><span>Nombre / Descripción *</span><input id="q-man-nombre-oi" type="text" maxlength="120" placeholder="Ej. Tallado 1.67 Antirreflejo"></label>
                 <div class="rx-list">
-                  <label class="field"><span>Tipo</span><select id="q-man-tipo-oi"><option value="Stock">Stock</option><option value="Laboratorio">Laboratorio</option></select></label>
+                  <label class="field"><span>Tipo</span><select id="q-man-tipo-oi"><option value="Stock">Stock</option><option value="Rango Extendido">Rango Extendido</option><option value="Laboratorio">Laboratorio</option></select></label>
                   <label class="field"><span>Diseño</span><select id="q-man-diseno-oi"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>
                   <label class="field"><span>Índice</span><select id="q-man-indice-oi"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>
                   <label class="field"><span>Tratamiento</span><input id="q-man-trat-oi" type="text" maxlength="40" placeholder="Blanco / AR / Blue Cut / Foto"></label>
@@ -240,7 +241,7 @@
 
           <div class="actions">
             <button id="btn-back-extra" class="btn ghost" type="button">← Datos</button>
-            <button id="btn-save" class="btn primary" type="button">Guardar receta y presupuesto</button>
+            <button id="btn-to-close" class="btn primary" type="button" hidden>Finalizar / Cierre de venta →</button>
           </div>
           <p id="quote-error" class="error" role="alert"></p>
         </div>
@@ -249,29 +250,68 @@
           <article id="quote-sheet" class="card quote-sheet" aria-label="Ficha técnica y presupuesto"></article>
           <div class="actions no-print">
             <button id="btn-print-quote" class="btn ghost" type="button">🖨️ Imprimir / PDF</button>
-            <button id="btn-share-quote" class="btn primary" type="button">📲 Imagen para WhatsApp</button>
+            <button id="btn-share-quote" class="btn primary" type="button">📲 Enviar por WhatsApp</button>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- LISTO -->
+    <!-- CIERRE DE VENTA -->
     <section id="screen-done" class="screen" hidden>
-      <div class="card narrow center">
-        <div class="success-icon" aria-hidden="true">✓</div>
-        <h2>Receta y presupuesto guardados</h2>
-        <p id="done-detail" class="muted"></p>
-        <p><a id="done-link" href="#" target="_blank" rel="noopener" hidden>Ver foto en Drive ↗</a></p>
+      <div class="card narrow">
+        <div class="center">
+          <div class="success-icon" aria-hidden="true">✓</div>
+          <h2>Presupuesto emitido</h2>
+          <p id="done-detail" class="muted"></p>
+          <p><a id="done-link" href="#" target="_blank" rel="noopener" hidden>Ver foto en Drive ↗</a></p>
+        </div>
         <div class="actions">
           <button id="btn-done-print" class="btn ghost" type="button">🖨️ Imprimir / PDF</button>
-          <button id="btn-done-share" class="btn ghost" type="button">📲 Imagen para WhatsApp</button>
+          <button id="btn-done-share" class="btn ghost" type="button">📲 Enviar por WhatsApp</button>
         </div>
-        <div class="actions">
-          <button id="btn-new" class="btn primary big" type="button">Nueva receta</button>
-        </div>
+        <hr class="close-divider">
+        <form id="close-form" autocomplete="off" novalidate>
+          <h3>Cierre de venta</h3>
+          <div class="field">
+            <span>¿Se concretó la venta? <b class="req">*</b></span>
+            <div class="radio-group">
+              <label class="radio-opt"><input type="radio" name="sold" value="si" required> <span>Sí</span></label>
+              <label class="radio-opt"><input type="radio" name="sold" value="no" required> <span>No</span></label>
+            </div>
+          </div>
+          <div id="close-yes-fields" hidden>
+            <label class="field"><span>Número OT <b class="req">*</b></span><input id="c-ot" type="text" maxlength="60"></label>
+            <label class="field"><span>Monto <b class="req">*</b></span><input id="c-monto" type="number" min="0" step="100" inputmode="numeric"></label>
+            <label class="field"><span>Tipo Lente <b class="req">*</b></span><input id="c-tipo-lente" type="text" maxlength="120"></label>
+          </div>
+          <div id="close-no-fields" hidden>
+            <label class="field"><span>Motivo <b class="req">*</b></span><textarea id="c-motivo" maxlength="500" placeholder="Ej. Solo consultaba precio, lo piensa, etc."></textarea></label>
+          </div>
+          <div class="actions">
+            <button id="btn-close-submit" class="btn primary big" type="submit">Registrar cierre y nueva receta</button>
+          </div>
+          <p id="close-error" class="error" role="alert"></p>
+        </form>
       </div>
     </section>
   </main>
+
+  <!-- Modal Abandonar Presupuesto -->
+  <div id="abandon-modal" class="overlay" hidden>
+    <form id="abandon-form" class="card narrow" autocomplete="off" novalidate>
+      <h2>Abandonar presupuesto</h2>
+      <p class="muted small">Se guardará como registro incompleto/abandonado con el motivo.</p>
+      <label class="field">
+        <span>Motivo <b class="req">*</b></span>
+        <textarea id="abandon-reason" maxlength="500" required placeholder="Ej. Cliente se retiró, foto ilegible, se pospuso..."></textarea>
+      </label>
+      <div class="actions">
+        <button id="btn-abandon-cancel" class="btn ghost" type="button">Volver</button>
+        <button id="btn-abandon-confirm" class="btn danger" type="submit">Confirmar abandono</button>
+      </div>
+      <p id="abandon-error" class="error" role="alert"></p>
+    </form>
+  </div>
 
   <!-- Re-login (token vencido) -->
   <div id="reauth" class="overlay" hidden>

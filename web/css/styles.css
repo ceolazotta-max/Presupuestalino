@@ -244,3 +244,21 @@ input.invalid, textarea.invalid { outline: 2px solid var(--danger); outline-offs
   main { max-width: none; padding: 0; }
   .quote-sheet { box-shadow: none; border: 0; padding: 0; }
 }
+
+.btn-abandon {
+  background: rgba(255, 255, 255, .16); color: #fff; border: 1px solid rgba(255, 255, 255, .45);
+  border-radius: 8px; padding: .28rem .6rem; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+}
+.btn-abandon:hover { background: #dc2626; border-color: #dc2626; }
+.btn.danger { background: var(--danger); color: #fff; }
+.btn.danger:hover { background: #991b1b; }
+
+.badge.ext { background: #e0f2fe; color: #075985; }
+.radio-group { display: flex; gap: .75rem; margin: .25rem 0 .85rem; }
+.radio-opt {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: .45rem;
+  border: 1.5px solid var(--border); border-radius: 10px; padding: .6rem; cursor: pointer; font-weight: 700;
+}
+.radio-opt input[type=radio] { width: 1.15rem; height: 1.15rem; margin: 0; }
+.radio-opt:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-dark); }
+.close-divider { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }

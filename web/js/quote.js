@@ -5,13 +5,17 @@
 (function (root) {
   'use strict';
 
+  var TIER_RANK = { 'Stock': 1, 'Rango Extendido': 2, 'Laboratorio': 3 };
+
   var SEED_CATALOG = [
     { codigo: 'STK-150-BL', nombre: 'Orgánico 1.50 Blanco', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Blanco', esfMin: -6, esfMax: 4, cilMax: 2, sumaMax: 6, precioMedioPar: 18000, activo: 'Sí' },
     { codigo: 'STK-150-AR', nombre: 'Orgánico 1.50 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 26000, activo: 'Sí' },
     { codigo: 'STK-156-BC', nombre: 'Orgánico 1.56 Blue Cut', tipo: 'Stock', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Blue Cut', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 34000, activo: 'Sí' },
     { codigo: 'STK-156-FC', nombre: 'Orgánico 1.56 Fotocromático', tipo: 'Stock', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Fotocromático', esfMin: -6, esfMax: 4, cilMax: 2, sumaMax: 6, precioMedioPar: 46000, activo: 'Sí' },
     { codigo: 'STK-159-AR', nombre: 'Policarbonato 1.59 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 38000, activo: 'Sí' },
-    { codigo: 'STK-167-AR', nombre: 'Alto Índice 1.67 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 6, cilMax: 2, sumaMax: 10, precioMedioPar: 62000, activo: 'Sí' },
+    { codigo: 'STK-167-AR', nombre: 'Alto Índice 1.67 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 62000, activo: 'Sí' },
+    { codigo: 'EXT-156-AR', nombre: 'Orgánico 1.56 Rango Extendido Antirreflejo', tipo: 'Rango Extendido', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 36000, activo: 'Sí' },
+    { codigo: 'EXT-159-BC', nombre: 'Policarbonato 1.59 Rango Extendido Blue Cut', tipo: 'Rango Extendido', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -10, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 48000, activo: 'Sí' },
     { codigo: 'LAB-150-AR', nombre: 'Tallado Orgánico 1.50 Antirreflejo', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -14, esfMax: 12, cilMax: 6, sumaMax: 16, precioMedioPar: 42000, activo: 'Sí' },
     { codigo: 'LAB-159-BC', nombre: 'Tallado Policarbonato 1.59 Blue Cut', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -16, esfMax: 12, cilMax: 6, sumaMax: 18, precioMedioPar: 58000, activo: 'Sí' },
     { codigo: 'LAB-167-AR', nombre: 'Tallado Alto Índice 1.67 Antirreflejo', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -20, esfMax: 14, cilMax: 6, sumaMax: 22, precioMedioPar: 86000, activo: 'Sí' },
@@ -172,34 +176,46 @@
     return 'lejos';
   }
 
-  function canEyeUseStock(eyeRx, uso) {
+  function getEyeMinTier(eyeRx, uso) {
     if (['multifocal', 'bifocal', 'ocupacional'].indexOf(uso) >= 0) {
-      return { ok: false, reason: 'Diseño ' + uso + ' requiere tallado de Laboratorio' };
+      return { tipo: 'Laboratorio', rank: 3, reason: 'Diseño ' + uso + ' requiere Laboratorio' };
     }
     if (eyeRx && eyeRx.hasPrisma) {
-      return { ok: false, reason: 'Receta con prisma requiere Laboratorio' };
+      return { tipo: 'Laboratorio', rank: 3, reason: 'Receta con prisma requiere Laboratorio' };
     }
     if (!eyeRx || !eyeRx.hasGrad || eyeRx.esf_t === null) {
-      return { ok: true, reason: '' };
+      return { tipo: 'Stock', rank: 1, reason: '' };
     }
-    if (eyeRx.absCil > 2.00) {
-      return { ok: false, reason: 'Cilindro ' + fmtDiopter(eyeRx.cil_t) + ' supera rango de Stock (máx -2.00)' };
+    if (eyeRx.absCil > 4.00 || eyeRx.esf_t < -10.00 || eyeRx.esf_t > 6.00 || eyeRx.meridianoMax > 10.00) {
+      return { tipo: 'Laboratorio', rank: 3, reason: 'Graduación de Laboratorio' };
     }
-    if (eyeRx.esf_t < -10.00 || eyeRx.esf_t > 6.00 || eyeRx.meridianoMax > 10.00) {
-      return { ok: false, reason: 'Esfera/meridiano fuera de rango de Stock (-10.00 a +6.00)' };
+    if (eyeRx.absCil > 2.00 || eyeRx.esf_t < -8.00 || eyeRx.esf_t > 6.00 || eyeRx.meridianoMax > 8.00) {
+      return { tipo: 'Rango Extendido', rank: 2, reason: 'Cilindro/esfera requiere Rango Extendido o Lab' };
     }
-    return { ok: true, reason: '' };
+    return { tipo: 'Stock', rank: 1, reason: '' };
   }
 
-  function checkProductForEye(product, eyeRx, uso) {
+  function canEyeUseStock(eyeRx, uso) {
+    var minTier = getEyeMinTier(eyeRx, uso);
+    return { ok: minTier.rank === 1, reason: minTier.reason };
+  }
+
+  function checkProductForEye(product, eyeRx, uso, requiredTierRank) {
     if (!product) return { allowed: false, reason: 'Sin producto seleccionado' };
     var expectedDesign = USO_TO_DISENO[uso || 'lejos'];
     if (expectedDesign && product.diseno && product.diseno !== expectedDesign) {
       return { allowed: false, reason: 'Diseño ' + product.diseno + ' no coincide con uso ' + uso };
     }
-    if (product.tipo === 'Stock') {
-      var stockCheck = canEyeUseStock(eyeRx, uso);
-      if (!stockCheck.ok) return { allowed: false, reason: stockCheck.reason };
+    var prodRank = TIER_RANK[product.tipo] || 1;
+    var eyeMin = getEyeMinTier(eyeRx, uso);
+    if (prodRank < eyeMin.rank) {
+      return { allowed: false, reason: eyeMin.reason };
+    }
+    if (requiredTierRank && prodRank < requiredTierRank) {
+      var reqName = requiredTierRank === 3 ? 'Laboratorio' : 'Rango Extendido o Laboratorio';
+      return { allowed: false, reason: 'Requiere nivel ' + reqName };
+    }
+    if (product.tipo === 'Stock' || product.tipo === 'Rango Extendido') {
       if (eyeRx && eyeRx.hasGrad && eyeRx.esf_t !== null) {
         if (eyeRx.esf_t < product.esfMin || eyeRx.esf_t > product.esfMax) {
           return {
@@ -230,14 +246,20 @@
     if (!sel) return null;
     if (sel.mode === 'manual') {
       var m = sel.manual || {};
+      var mTipo = m.tipo || 'Stock';
+      var isLab = mTipo === 'Laboratorio';
+      var isExt = mTipo === 'Rango Extendido';
       return {
         codigo: 'MANUAL',
         nombre: String(m.nombre || '').trim(),
-        tipo: m.tipo || 'Stock',
+        tipo: mTipo,
         diseno: m.diseno || 'Monofocal',
         indice: m.indice || '',
         tratamiento: m.tratamiento || '',
-        esfMin: -10, esfMax: 6, cilMax: 2, sumaMax: 10,
+        esfMin: isLab ? -20 : (isExt ? -10 : -8),
+        esfMax: isLab ? 14 : 6,
+        cilMax: isLab ? 6 : (isExt ? 4 : 2),
+        sumaMax: isLab ? 22 : (isExt ? 10 : 8),
         precioMedioPar: Number(sel.price != null ? sel.price : m.precio) || 0,
         isManual: true,
         saveToCatalog: Boolean(m.saveToCatalog)
@@ -273,6 +295,9 @@
     var includeOi = eyesMode !== 'od';
     var prodOd = includeOd ? resolveEyeProduct(quoteState.od, catalog) : null;
     var prodOi = includeOi ? resolveEyeProduct(quoteState.oi, catalog) : null;
+    var reqRank = (includeOd && includeOi)
+      ? Math.max(getEyeMinTier(eff.od, uso).rank, getEyeMinTier(eff.oi, uso).rank)
+      : (includeOd ? getEyeMinTier(eff.od, uso).rank : getEyeMinTier(eff.oi, uso).rank);
 
     [
       { inc: includeOd, label: 'OD', sel: quoteState.od, prod: prodOd, eyeRx: eff.od },
@@ -283,13 +308,16 @@
         errors.push('Falta seleccionar cristal para ½ par ' + e.label + '.');
         return;
       }
-      var chk = checkProductForEye(e.prod, e.eyeRx, uso);
+      var chk = checkProductForEye(e.prod, e.eyeRx, uso, reqRank);
       if (!chk.allowed) errors.push(e.label + ': ' + chk.reason);
       var price = Number(e.sel && e.sel.price != null ? e.sel.price : e.prod.precioMedioPar);
       if (!(price > 0)) errors.push('Falta precio válido para ½ par ' + e.label + '.');
     });
 
     if (includeOd && includeOi && prodOd && prodOi && prodOd.nombre && prodOi.nombre) {
+      if (prodOd.tipo !== prodOi.tipo) {
+        errors.push('Ambos ojos deben tener el mismo rango (' + prodOd.tipo + ' vs ' + prodOi.tipo + ').');
+      }
       if (prodOd.indice && prodOi.indice && prodOd.indice !== prodOi.indice) {
         warnings.push('Asimetría de índice entre ojos (OD ' + prodOd.indice + ' vs OI ' + prodOi.indice + ').');
       }
@@ -344,8 +372,15 @@
     quoteState = quoteState || {};
     var cfg = Object.assign({}, DEFAULT_PAYMENT_CONFIG, paymentCfg || {});
     var eyesMode = quoteState.eyesMode || 'both';
-    var odPrice = eyesMode === 'oi' ? 0 : nonNeg(quoteState.od && quoteState.od.price);
-    var oiPrice = eyesMode === 'od' ? 0 : nonNeg(quoteState.oi && quoteState.oi.price);
+    var rawOdPrice = eyesMode === 'oi' ? 0 : nonNeg(quoteState.od && quoteState.od.price);
+    var rawOiPrice = eyesMode === 'od' ? 0 : nonNeg(quoteState.oi && quoteState.oi.price);
+    var odPrice = rawOdPrice;
+    var oiPrice = rawOiPrice;
+    if (eyesMode === 'both') {
+      var pairUnit = Math.max(rawOdPrice, rawOiPrice);
+      odPrice = pairUnit;
+      oiPrice = pairUnit;
+    }
     var frameMode = (quoteState.frame && quoteState.frame.mode) || 'none';
     var framePrice = frameMode === 'nuevo' ? nonNeg(quoteState.frame && quoteState.frame.price) : 0;
     var subtotal = odPrice + oiPrice + framePrice;
@@ -359,6 +394,8 @@
     return {
       odPrice: odPrice,
       oiPrice: oiPrice,
+      rawOdPrice: rawOdPrice,
+      rawOiPrice: rawOiPrice,
       framePrice: framePrice,
       subtotal: subtotal,
       discountAmount: discountAmount,
@@ -366,6 +403,7 @@
       depositAmount: depositAmount,
       balanceBase: balanceBase,
       cashDiscountPct: Number(cfg.cashDiscountPct) || 0,
+      transferSurchargePct: Number(cfg.transferSurchargePct) || 0,
       cashTotal: cashTotal,
       transferTotal: transferTotal,
       cardOptions: buildPlans(balanceBase, cfg.cardPlans),
@@ -378,6 +416,7 @@
   }
 
   var api = {
+    TIER_RANK: TIER_RANK,
     SEED_CATALOG: SEED_CATALOG,
     DEFAULT_PAYMENT_CONFIG: DEFAULT_PAYMENT_CONFIG,
     USO_TO_DISENO: USO_TO_DISENO,
@@ -389,6 +428,7 @@
     normalizeEyeRx: normalizeEyeRx,
     resolveEffectiveRx: resolveEffectiveRx,
     inferDefaultUso: inferDefaultUso,
+    getEyeMinTier: getEyeMinTier,
     canEyeUseStock: canEyeUseStock,
     checkProductForEye: checkProductForEye,
     resolveEyeProduct: resolveEyeProduct,

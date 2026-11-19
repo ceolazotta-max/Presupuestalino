@@ -68,15 +68,17 @@
   }
 
   var demoExtraCatalog = [];
+  var demoSavedUuids = {};
 
   async function handle(payload) {
     if (payload.action === 'catalog') {
       await wait(150);
       var q = getQuoteMod();
       var base = q ? q.SEED_CATALOG : [];
-      return { ok: true, items: base.concat(demoExtraCatalog) };
+      var payCfg = q ? q.DEFAULT_PAYMENT_CONFIG : null;
+      return { ok: true, items: base.concat(demoExtraCatalog), paymentConfig: payCfg };
     }
-    await wait(1200);
+    await wait(payload.stage === 'incompleto' ? 200 : 800);
     if (payload.action === 'ocr') {
       return { ok: true, fields: mockFields(), rx: JSON.parse(JSON.stringify(RX)), raw: JSON.stringify(RX) };
     }
@@ -84,17 +86,18 @@
       if (Array.isArray(payload.newCatalogItems) && payload.newCatalogItems.length) {
         payload.newCatalogItems.forEach(function (it, idx) {
           var isLab = /^lab/i.test(String(it.tipo || '')) || (it.diseno && it.diseno !== 'Monofocal');
+          var isExt = !isLab && /extend|rango/i.test(String(it.tipo || ''));
           demoExtraCatalog.push({
             codigo: 'DEMO-' + (demoExtraCatalog.length + idx + 1),
             nombre: it.nombre,
-            tipo: isLab ? 'Laboratorio' : 'Stock',
+            tipo: isLab ? 'Laboratorio' : (isExt ? 'Rango Extendido' : 'Stock'),
             diseno: it.diseno || 'Monofocal',
             indice: it.indice || '1.50',
             tratamiento: it.tratamiento || '',
-            esfMin: isLab ? -20 : -10,
+            esfMin: isLab ? -20 : (isExt ? -10 : -8),
             esfMax: isLab ? 14 : 6,
-            cilMax: isLab ? 6 : 2,
-            sumaMax: isLab ? 22 : 10,
+            cilMax: isLab ? 6 : (isExt ? 4 : 2),
+            sumaMax: isLab ? 22 : (isExt ? 10 : 8),
             precioMedioPar: Number(it.precioMedioPar) || 0,
             activo: 'Sí'
           });
@@ -102,13 +105,23 @@
       }
       var copy = Object.assign({}, payload, { image: '[' + (payload.image || '').length + ' chars]' });
       console.info('[DEMO] payload que se enviaría al backend:', copy);
+      var existed = Boolean(payload.uuid && demoSavedUuids[payload.uuid]);
+      if (payload.uuid) demoSavedUuids[payload.uuid] = true;
       var d = new Date();
       var p = function (n) { return String(n).padStart(2, '0'); };
       var stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '_' +
         p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
       var name = String(payload.photoName || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'sin-nombre';
-      return { ok: true, fila: 42, fotoUrl: '', fotoNombre: stamp + '_' + name + '.jpg', demo: true };
+      return {
+        ok: true,
+        fila: 42,
+        fotoUrl: '',
+        fotoNombre: stamp + '_' + name + '.jpg',
+        estado: payload.stage || 'presupuestado',
+        updated: existed,
+        demo: true
+      };
     }
     return { ok: false, code: 400, error: 'Acción desconocida' };
   }

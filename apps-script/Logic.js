@@ -172,14 +172,15 @@ function formatPersonName(s) {
  * record: [[header, value], ...] en orden preferido.
  * Retorna { headers (completos), row, added (nuevos) }.
  */
-function buildRow(existingHeaders, record) {
+function buildRow(existingHeaders, record, existingRow) {
   var headers = (existingHeaders || []).map(function (h) { return String(h || '').trim(); });
   while (headers.length && !headers[headers.length - 1]) headers.pop();
   var added = [];
   record.forEach(function (pair) {
     if (headers.indexOf(pair[0]) < 0) { headers.push(pair[0]); added.push(pair[0]); }
   });
-  var row = headers.map(function () { return ''; });
+  var prev = Array.isArray(existingRow) ? existingRow : [];
+  var row = headers.map(function (_, i) { return i < prev.length && prev[i] !== undefined ? prev[i] : ''; });
   record.forEach(function (pair) { row[headers.indexOf(pair[0])] = pair[1]; });
   return { headers: headers, row: row, added: added };
 }
@@ -219,7 +220,9 @@ var SEED_CATALOG_ITEMS = [
   { codigo: 'STK-156-BC', nombre: 'Orgánico 1.56 Blue Cut', tipo: 'Stock', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Blue Cut', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 34000, activo: 'Sí' },
   { codigo: 'STK-156-FC', nombre: 'Orgánico 1.56 Fotocromático', tipo: 'Stock', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Fotocromático', esfMin: -6, esfMax: 4, cilMax: 2, sumaMax: 6, precioMedioPar: 46000, activo: 'Sí' },
   { codigo: 'STK-159-AR', nombre: 'Policarbonato 1.59 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 38000, activo: 'Sí' },
-  { codigo: 'STK-167-AR', nombre: 'Alto Índice 1.67 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 6, cilMax: 2, sumaMax: 10, precioMedioPar: 62000, activo: 'Sí' },
+  { codigo: 'STK-167-AR', nombre: 'Alto Índice 1.67 Antirreflejo', tipo: 'Stock', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -8, esfMax: 6, cilMax: 2, sumaMax: 8, precioMedioPar: 62000, activo: 'Sí' },
+  { codigo: 'EXT-156-AR', nombre: 'Orgánico 1.56 Rango Extendido Antirreflejo', tipo: 'Rango Extendido', diseno: 'Monofocal', indice: '1.56', tratamiento: 'Antirreflejo', esfMin: -10, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 36000, activo: 'Sí' },
+  { codigo: 'EXT-159-BC', nombre: 'Policarbonato 1.59 Rango Extendido Blue Cut', tipo: 'Rango Extendido', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -10, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 48000, activo: 'Sí' },
   { codigo: 'LAB-150-AR', nombre: 'Tallado Orgánico 1.50 Antirreflejo', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.50', tratamiento: 'Antirreflejo', esfMin: -14, esfMax: 12, cilMax: 6, sumaMax: 16, precioMedioPar: 42000, activo: 'Sí' },
   { codigo: 'LAB-159-BC', nombre: 'Tallado Policarbonato 1.59 Blue Cut', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -16, esfMax: 12, cilMax: 6, sumaMax: 18, precioMedioPar: 58000, activo: 'Sí' },
   { codigo: 'LAB-167-AR', nombre: 'Tallado Alto Índice 1.67 Antirreflejo', tipo: 'Laboratorio', diseno: 'Monofocal', indice: '1.67', tratamiento: 'Antirreflejo', esfMin: -20, esfMax: 14, cilMax: 6, sumaMax: 22, precioMedioPar: 86000, activo: 'Sí' },
@@ -228,6 +231,26 @@ var SEED_CATALOG_ITEMS = [
   { codigo: 'LAB-MUL-159', nombre: 'Multifocal Digital Poly 1.59 Blue Cut', tipo: 'Laboratorio', diseno: 'Multifocal', indice: '1.59', tratamiento: 'Blue Cut', esfMin: -12, esfMax: 8, cilMax: 5, sumaMax: 14, precioMedioPar: 105000, activo: 'Sí' },
   { codigo: 'LAB-OCU-156', nombre: 'Ocupacional 1.56 Blue Cut', tipo: 'Laboratorio', diseno: 'Ocupacional', indice: '1.56', tratamiento: 'Blue Cut', esfMin: -8, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 72000, activo: 'Sí' }
 ];
+
+var PAYMENT_HEADERS = ['Medio', 'Plan', 'Cuotas', 'Recargo_Porcentaje', 'Activo'];
+
+var SEED_PAYMENT_ROWS = [
+  ['Efectivo', 'Contado', 1, -10, 'Sí'],
+  ['Transferencia', 'Contado', 1, 0, 'Sí'],
+  ['Tarjeta', '1 cuota', 1, 0, 'Sí'],
+  ['Tarjeta', '3 cuotas', 3, 15, 'Sí'],
+  ['Tarjeta', '6 cuotas', 6, 30, 'Sí'],
+  ['Plan Cristalino', '2 cuotas', 2, 12, 'Sí'],
+  ['Plan Cristalino', '3 cuotas', 3, 20, 'Sí'],
+  ['Plan Cristalino', '6 cuotas', 6, 42, 'Sí']
+];
+
+function normalizeCatalogTipo_(raw) {
+  var s = String(raw || '').trim();
+  if (/lab/i.test(s)) return 'Laboratorio';
+  if (/extend|rango/i.test(s)) return 'Rango Extendido';
+  return 'Stock';
+}
 
 function numOrDefault_(v, def) {
   var n = Number(String(v === undefined || v === null ? '' : v).replace(',', '.'));
@@ -246,11 +269,11 @@ function parseCatalogRows(rows) {
     if (!nombre) continue;
     var activo = String(r[idx('Activo')] || 'Sí').trim().toLowerCase();
     if (activo === 'no' || activo === 'false' || activo === '0') continue;
-    var tipo = String(r[idx('Tipo')] || 'Stock').trim();
+    var tipo = normalizeCatalogTipo_(r[idx('Tipo')]);
     items.push({
       codigo: String(r[idx('Codigo')] || ('CAT-' + i)).trim(),
       nombre: nombre,
-      tipo: /^lab/i.test(tipo) ? 'Laboratorio' : 'Stock',
+      tipo: tipo,
       diseno: String(r[idx('Diseno')] || 'Monofocal').trim(),
       indice: String(r[idx('Indice')] || '1.50').trim(),
       tratamiento: String(r[idx('Tratamiento')] || '').trim(),
@@ -265,15 +288,60 @@ function parseCatalogRows(rows) {
   return items;
 }
 
+/** Convierte filas de la pestaña Medios_Pago en configuración de descuentos/cuotas. */
+function parsePaymentRows(rows) {
+  var cfg = {
+    cashDiscountPct: 10,
+    transferSurchargePct: 0,
+    cardPlans: [],
+    cristalinoPlans: []
+  };
+  if (!Array.isArray(rows) || rows.length < 2) {
+    return {
+      cashDiscountPct: 10,
+      transferSurchargePct: 0,
+      cardPlans: [{ cuotas: 1, surchargePct: 0 }, { cuotas: 3, surchargePct: 15 }, { cuotas: 6, surchargePct: 30 }],
+      cristalinoPlans: [{ cuotas: 2, surchargePct: 12 }, { cuotas: 3, surchargePct: 20 }, { cuotas: 6, surchargePct: 42 }]
+    };
+  }
+  var headers = rows[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
+  var idx = function (name) { return headers.indexOf(name.toLowerCase()); };
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i] || [];
+    var medio = String(r[idx('Medio')] || '').trim();
+    if (!medio) continue;
+    var activo = String(r[idx('Activo')] || 'Sí').trim().toLowerCase();
+    if (activo === 'no' || activo === 'false' || activo === '0') continue;
+    var plan = String(r[idx('Plan')] || '').trim();
+    var cuotas = Math.max(1, Math.round(numOrDefault_(r[idx('Cuotas')], 1)));
+    var rec = numOrDefault_(r[idx('Recargo_Porcentaje')], 0);
+    if (/efectivo/i.test(medio)) {
+      cfg.cashDiscountPct = rec < 0 ? -rec : rec;
+    } else if (/transfer/i.test(medio)) {
+      cfg.transferSurchargePct = rec;
+    } else if (/cristalino/i.test(medio)) {
+      cfg.cristalinoPlans.push({ cuotas: cuotas, plan: plan || (cuotas + ' cuotas'), surchargePct: rec });
+    } else if (/tarjeta/i.test(medio)) {
+      cfg.cardPlans.push({ cuotas: cuotas, plan: plan || (cuotas + ' cuotas'), surchargePct: rec });
+    }
+  }
+  cfg.cardPlans.sort(function (a, b) { return a.cuotas - b.cuotas; });
+  cfg.cristalinoPlans.sort(function (a, b) { return a.cuotas - b.cuotas; });
+  if (!cfg.cardPlans.length) cfg.cardPlans = [{ cuotas: 1, surchargePct: 0 }];
+  if (!cfg.cristalinoPlans.length) cfg.cristalinoPlans = [{ cuotas: 2, surchargePct: 12 }];
+  return cfg;
+}
+
 /** Valida y limpia un cristal cargado manualmente para guardarlo en Catalogo. */
 function sanitizeCatalogItem(item, stamp) {
   if (!item || typeof item !== 'object') return null;
   var nombre = sanitizeCell(item.nombre, 120);
   if (!nombre) return null;
-  var tipo = /^lab/i.test(String(item.tipo || '')) ? 'Laboratorio' : 'Stock';
+  var tipo = normalizeCatalogTipo_(item.tipo);
   var diseno = ['Monofocal', 'Bifocal', 'Multifocal', 'Ocupacional'].indexOf(item.diseno) >= 0 ? item.diseno : 'Monofocal';
   if (diseno !== 'Monofocal') tipo = 'Laboratorio';
   var isLab = tipo === 'Laboratorio';
+  var isExt = tipo === 'Rango Extendido';
   var precio = Math.max(0, Math.round(Number(item.precioMedioPar || item.precio) || 0));
   var code = sanitizeCell(item.codigo, 30) || ('MAN-' + (stamp || Date.now().toString(36).toUpperCase()));
   return {
@@ -283,10 +351,10 @@ function sanitizeCatalogItem(item, stamp) {
     diseno: diseno,
     indice: sanitizeCell(item.indice || '1.50', 12),
     tratamiento: sanitizeCell(item.tratamiento || '', 40),
-    esfMin: isLab ? -20 : -10,
+    esfMin: isLab ? -20 : (isExt ? -10 : -8),
     esfMax: isLab ? 14 : 6,
-    cilMax: isLab ? 6 : 2,
-    sumaMax: isLab ? 22 : 10,
+    cilMax: isLab ? 6 : (isExt ? 4 : 2),
+    sumaMax: isLab ? 22 : (isExt ? 10 : 8),
     precioMedioPar: precio,
     activo: 'Sí'
   };
@@ -352,6 +420,8 @@ if (typeof module !== 'undefined' && module.exports) {
     CATALOG_HEADERS: CATALOG_HEADERS, SEED_CATALOG_ITEMS: SEED_CATALOG_ITEMS,
     parseCatalogRows: parseCatalogRows, sanitizeCatalogItem: sanitizeCatalogItem,
     catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult,
-    formatPersonName: formatPersonName, toSheetValue: toSheetValue
+    formatPersonName: formatPersonName, toSheetValue: toSheetValue,
+    PAYMENT_HEADERS: PAYMENT_HEADERS, SEED_PAYMENT_ROWS: SEED_PAYMENT_ROWS,
+    parsePaymentRows: parsePaymentRows
   };
 }
