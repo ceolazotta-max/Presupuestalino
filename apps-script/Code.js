@@ -24,6 +24,7 @@ var OCR_PROMPT = [
   'tratamientos pedidos, teléfonos, sellos legibles) va en "anotaciones_extra" (máximo 5 items) con su transcripción tentativa',
   'y ubicación aproximada (ej "margen inferior derecho").',
   'Ignorá códigos QR, códigos de barras, números administrativos/afiliado del formulario y textos legales del membrete.',
+  'En "paciente" y "medico", formateá SIEMPRE como "Apellido Nombre" (primero apellido y luego nombre, en formato Título, sin comas ni prefijos Dr./Dra.).',
   'es_receta_optica = false si la imagen claramente no es una receta óptica.'
 ].join(' ');
 
@@ -310,7 +311,7 @@ function handleSave_(user, body) {
       ['Usuario', user.email]
     ];
     sanitizeExtraFields(body.extraFields).forEach(function (f) { record.push([f.label, f.value]); });
-    rxFields_().forEach(function (f) { record.push([f.label, sanitizeCell(rx[f.key])]); });
+    rxFields_().forEach(function (f) { record.push([f.label, toSheetValue(rx[f.key])]); });
     var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
     record.push(
       ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
@@ -324,23 +325,20 @@ function handleSave_(user, body) {
         ['Ojos cotizados', sanitizeCell(q.eyesMode, 40)],
         ['½ Par OD', sanitizeCell(q.odNombre, 140)],
         ['Tipo OD', sanitizeCell(q.odTipo, 30)],
-        ['Precio ½ OD', sanitizeCell(q.odPrecio, 30)],
+        ['Precio ½ OD', toSheetValue(q.odPrecio, 30)],
         ['½ Par OI', sanitizeCell(q.oiNombre, 140)],
         ['Tipo OI', sanitizeCell(q.oiTipo, 30)],
-        ['Precio ½ OI', sanitizeCell(q.oiPrecio, 30)],
+        ['Precio ½ OI', toSheetValue(q.oiPrecio, 30)],
         ['Armazón', sanitizeCell(q.armazon, 140)],
-        ['Precio Armazón', sanitizeCell(q.armazonPrecio, 30)],
-        ['Descuento / OS', sanitizeCell(q.descuento, 80)],
-        ['Seña', sanitizeCell(q.sena, 30)],
-        ['Total Lista', sanitizeCell(q.totalLista, 30)],
-        ['Total Efectivo (-10%)', sanitizeCell(q.totalEfectivo, 30)],
+        ['Precio Armazón', toSheetValue(q.armazonPrecio, 30)],
+        ['Descuento / OS', toSheetValue(q.descuento, 80)],
+        ['Seña', toSheetValue(q.sena, 30)],
+        ['Total Lista', toSheetValue(q.totalLista, 30)],
+        ['Total Efectivo (-10%)', toSheetValue(q.totalEfectivo, 30)],
         ['Plan Cristalino', sanitizeCell(q.planCristalino, 300)]
       );
     }
-    record.push(
-      ['Foto', file.getUrl()],
-      ['OCR crudo', sanitizeCell(body.raw, 45000)]
-    );
+    record.push(['Foto', file.getUrl()]);
 
     if (Array.isArray(body.newCatalogItems) && body.newCatalogItems.length) {
       var catSheet = ensureCatalogSheet_(ss);
@@ -361,10 +359,12 @@ function handleSave_(user, body) {
     if (built.added.length) {
       sheet.getRange(1, 1, 1, built.headers.length).setValues([built.headers]).setFontWeight('bold');
       if (!sheet.getFrozenRows()) sheet.setFrozenRows(1);
+      SpreadsheetApp.flush();
     }
-    var rowIdx = sheet.getLastRow() + 1;
+    var rowIdx = Math.max(sheet.getLastRow(), 1) + 1;
     var range = sheet.getRange(rowIdx, 1, 1, built.row.length);
-    range.setNumberFormat('@'); // texto plano: conserva "+0.50", "031", etc.
+    range.setNumberFormat('General');
+    range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     range.setValues([built.row]);
 
     var result = { ok: true, fila: rowIdx, fotoUrl: file.getUrl(), fotoNombre: fileName };

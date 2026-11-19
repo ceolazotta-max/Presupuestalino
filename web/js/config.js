@@ -18,31 +18,45 @@ window.APP_CONFIG = {
 
   // Formulario de datos adicionales. type: text | tel | email | textarea | select
   EXTRA_FIELDS: [
-    { key: 'nombre', label: 'Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
+    { key: 'nombre', label: 'Apellido y Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
     { key: 'telefono', label: 'Teléfono', type: 'tel', required: true, autocomplete: 'tel' },
     { key: 'email', label: 'Email cliente', type: 'email', required: true, autocomplete: 'email' },
     {
-      key: 'origen',
-      label: '¿De dónde nos conoce?',
+      key: 'derivacion',
+      label: 'Derivación',
       type: 'select',
       required: true,
-      options: ['Ya era cliente', 'Recomendación', 'Redes sociales', 'Calle']
+      options: ['Derivado por Doctor', 'Derivado por Secretaria', 'Derivado por Doctor y Secretaria', 'No Derivado']
     },
     {
-      key: 'origen_quien',
-      label: 'Quién',
+      key: 'derivacion_doctor',
+      label: 'Nombre Doctor',
       type: 'text',
       required: true,
-      showWhen: { field: 'origen', value: 'Recomendación' }
+      showWhen: { field: 'derivacion', values: ['Derivado por Doctor', 'Derivado por Doctor y Secretaria'] }
     },
     {
-      key: 'origen_cual',
-      label: 'Cuál',
+      key: 'origen',
+      label: 'Origen',
+      type: 'select',
+      required: true,
+      options: ['Recomendación externa', 'Recomendación interna', 'Redes Sociales', 'Calle']
+    },
+    {
+      key: 'origen_nombre',
+      label: 'Nombre',
       type: 'text',
       required: true,
-      showWhen: { field: 'origen', value: 'Redes sociales' }
+      showWhen: { field: 'origen', values: ['Recomendación externa', 'Recomendación interna'] }
     },
-    { key: 'notas', label: 'Notas', type: 'textarea', required: true },
+    {
+      key: 'origen_red',
+      label: 'Red Social',
+      type: 'text',
+      required: true,
+      showWhen: { field: 'origen', value: 'Redes Sociales' }
+    },
+    { key: 'notas', label: 'Notas', type: 'textarea', required: false },
     {
       key: 'vendedor',
       label: 'Vendedor',

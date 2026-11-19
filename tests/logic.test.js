@@ -268,3 +268,28 @@ test('Logic.normalizeOcrResult completa las 22 claves y normaliza anotaciones', 
   assert.equal(norm.anotaciones_extra.length, 2);
   assert.equal(norm.anotaciones_extra[1].texto, 'sello médico');
 });
+
+test('Logic.formatPersonName y Logic.toSheetValue', () => {
+  assert.equal(L.formatPersonName('PEREZ, JUAN'), 'Perez Juan');
+  assert.equal(L.formatPersonName('Dra. MARÍA GÓMEZ'), 'María Gómez');
+  assert.equal(L.formatPersonName('  '), '');
+
+  assert.strictEqual(L.toSheetValue('-2.25'), -2.25);
+  assert.strictEqual(L.toSheetValue('+1,50'), 1.5);
+  assert.strictEqual(L.toSheetValue('180'), 180);
+  assert.strictEqual(L.toSheetValue('26000'), 26000);
+  assert.strictEqual(L.toSheetValue('0.00'), 0);
+  assert.strictEqual(L.toSheetValue('31/31'), '31/31');
+  assert.strictEqual(L.toSheetValue('=SUM(A1)'), "'=SUM(A1)");
+
+  const ext = L.sanitizeExtraFields([
+    { key: 'nombre', label: 'Apellido y Nombre cliente', value: 'GOMEZ, ANA' },
+    { key: 'derivacion_doctor', label: 'Nombre Doctor', value: 'dr. lopez carlos' },
+    { key: 'notas', label: 'Notas', value: '' }
+  ]);
+  assert.deepEqual(ext, [
+    { label: 'Apellido y Nombre cliente', value: 'Gomez Ana' },
+    { label: 'Nombre Doctor', value: 'Lopez Carlos' },
+    { label: 'Notas', value: '' }
+  ]);
+});

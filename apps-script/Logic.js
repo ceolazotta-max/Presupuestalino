@@ -145,6 +145,28 @@ function sanitizeCell(v, maxLen) {
   return s;
 }
 
+/** Convierte valores puramente numéricos (ej. "-2.25", "+1,50", "26000") a Number real para Google Sheets. */
+function toSheetValue(v, maxLen) {
+  var s = sanitizeCell(v, maxLen);
+  if (/^[+-]?\d+([.,]\d+)?$/.test(s)) return Number(s.replace(',', '.'));
+  return s;
+}
+
+/** Normaliza nombres propios: quita "Dr./Dra." y comas ("PEREZ, JUAN") → "Perez Juan". */
+function formatPersonName(s) {
+  var t = String(s == null ? '' : s)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(dr\.?|dra\.?)\s+/i, '')
+    .replace(/,/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t) return '';
+  return t.split(' ').map(function (w) {
+    return w.charAt(0).toLocaleUpperCase('es-AR') + w.slice(1).toLocaleLowerCase('es-AR');
+  }).join(' ');
+}
+
 /**
  * Mapea registro a fila según encabezados existentes.
  * record: [[header, value], ...] en orden preferido.
@@ -179,7 +201,10 @@ function sanitizeExtraFields(list) {
   if (!Array.isArray(list)) return [];
   return list.slice(0, 20).map(function (f) {
     var label = String((f && f.label) || '').replace(/[^\p{L}\p{N} ._()/?¿-]/gu, '').trim().slice(0, 40);
-    return { label: label, value: sanitizeCell(f && f.value) };
+    var val = toSheetValue(f && f.value);
+    var isName = (f && (f.key === 'nombre' || f.key === 'derivacion_doctor' || f.key === 'origen_nombre')) || /nombre|doctor/i.test(label);
+    if (typeof val === 'string' && val && isName) val = formatPersonName(val);
+    return { label: label, value: val };
   }).filter(function (f) { return f.label; });
 }
 
@@ -293,6 +318,9 @@ function normalizeOcrResult(rawObj, fields) {
       val = String(cell).trim();
       conf = 'media';
     }
+    if ((f.key === 'paciente' || f.key === 'medico') && val) {
+      val = formatPersonName(val);
+    }
     campos[f.key] = { valor: val, confianza: conf };
   });
 
@@ -323,6 +351,7 @@ if (typeof module !== 'undefined' && module.exports) {
     sanitizeExtraFields: sanitizeExtraFields, MAX_IMAGE_BYTES: MAX_IMAGE_BYTES,
     CATALOG_HEADERS: CATALOG_HEADERS, SEED_CATALOG_ITEMS: SEED_CATALOG_ITEMS,
     parseCatalogRows: parseCatalogRows, sanitizeCatalogItem: sanitizeCatalogItem,
-    catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult
+    catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult,
+    formatPersonName: formatPersonName, toSheetValue: toSheetValue
   };
 }

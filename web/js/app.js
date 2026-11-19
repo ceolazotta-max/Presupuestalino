@@ -466,7 +466,7 @@
       label.className = 'field';
       if (f.showWhen) {
         label.dataset.showField = f.showWhen.field;
-        label.dataset.showValue = f.showWhen.value;
+        label.dataset.showValues = JSON.stringify(f.showWhen.values || [f.showWhen.value]);
       }
       var span = document.createElement('span');
       span.innerHTML = '';
@@ -509,7 +509,8 @@
     var form = $('#extra-form');
     document.querySelectorAll('#extra-fields label[data-show-field]').forEach(function (label) {
       var ctrl = form.elements[label.dataset.showField];
-      var show = !!ctrl && ctrl.value === label.dataset.showValue;
+      var vals = JSON.parse(label.dataset.showValues || '[]');
+      var show = !!ctrl && vals.indexOf(ctrl.value) >= 0;
       label.hidden = !show;
       var input = label.querySelector('input, textarea, select');
       if (input) {
