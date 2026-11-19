@@ -287,9 +287,40 @@ test('Logic catálogo y medios de pago sincronizados con Quote', () => {
   const payCfg = L.parsePaymentRows([L.PAYMENT_HEADERS, ...L.SEED_PAYMENT_ROWS]);
   assert.equal(payCfg.cashDiscountPct, 10);
   assert.equal(payCfg.transferSurchargePct, 0);
-  assert.equal(payCfg.cardPlans.length, 3);
+  assert.equal(payCfg.cardPlans.length, 5);
+  assert.equal(payCfg.cardPlans[0].marca, 'Visa / Mastercard');
+  assert.equal(payCfg.cardPlans[3].marca, 'Naranja X');
+  assert.equal(payCfg.cardPlans[3].plan, 'Plan Z (3 cuotas)');
   assert.equal(payCfg.cristalinoPlans.length, 3);
   assert.equal(payCfg.cristalinoPlans[0].surchargePct, 12);
+
+  // Fallback legado sin columna Marca_Banco: infiere marca desde Medio ("Tarjeta Visa")
+  const legacyCfg = L.parsePaymentRows([
+    ['Medio', 'Plan', 'Cuotas', 'Recargo_Porcentaje', 'Activo'],
+    ['Tarjeta Visa', '3 cuotas', 3, 18, 'Sí'],
+    ['Tarjeta', '1 cuota', 1, 0, 'Sí']
+  ]);
+  assert.equal(legacyCfg.cardPlans.length, 2);
+  assert.equal(legacyCfg.cardPlans[0].marca, 'Visa');
+  assert.equal(legacyCfg.cardPlans[1].marca, 'General');
+
+  const totals = Q.calculateTotals({
+    uso: 'lejos',
+    eyesMode: 'od',
+    od: { price: 100000 },
+    oi: {},
+    frame: { mode: 'none', price: 0 },
+    discount: 0,
+    deposit: 0
+  }, payCfg);
+  assert.equal(totals.cardGroups.length, 2);
+  assert.equal(totals.cardGroups[0].marca, 'Visa / Mastercard');
+  assert.equal(totals.cardGroups[0].options.length, 3);
+  assert.equal(totals.cardGroups[0].options[1].total, 115000);
+  assert.equal(totals.cardGroups[1].marca, 'Naranja X');
+  assert.equal(totals.cardGroups[1].options.length, 2);
+  assert.equal(totals.cardGroups[1].options[0].plan, 'Plan Z (3 cuotas)');
+  assert.equal(totals.cardGroups[1].options[0].total, 110000);
 });
 
 test('Logic.normalizeOcrResult completa las 22 claves y normaliza anotaciones', () => {

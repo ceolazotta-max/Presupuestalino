@@ -1054,9 +1054,11 @@
       ? '<p class="qs-note">Graduación más alta define el valor aplicado a ambos cristales (' + esc(Q.fmtMoney(t.odPrice)) + ' c/u).</p>'
       : '';
 
-    var cardText = t.cardOptions.map(function (c) {
-      return c.cuotas === 1 ? '1× ' + Q.fmtMoney(c.total) : c.cuotas + '× ' + Q.fmtMoney(c.cuotaMensual) + ' (Tot ' + Q.fmtMoney(c.total) + ')';
-    }).join(' · ');
+    var cardRowsHtml = getCardGroups(t).map(function (g) {
+      var optText = g.options.map(function (c) { return formatCardOption(c, true); }).join(' · ');
+      return '<div class="qs-pay-row"><span>Tarjeta · ' + esc(g.marca) + '</span>' +
+        '<span class="qs-pay-sub" style="text-align:right;color:var(--text)">' + esc(optText) + '</span></div>';
+    }).join('');
 
     var cristalinoHtml = t.cristalinoOptions.map(function (p) {
       return '<div class="qs-pay-row"><span>Plan Cristalino ' + p.cuotas + ' cuotas (' + p.surchargePct + '% rec.)</span>' +
@@ -1080,10 +1082,24 @@
       '<div class="qs-pay"><h4>Medios de pago' + (t.depositAmount > 0 ? ' (sobre saldo)' : '') + '</h4>' +
       '<div class="qs-pay-row highlight"><span>Efectivo (' + t.cashDiscountPct + '% desc.)</span><span>' + esc(Q.fmtMoney(t.cashTotal)) + '</span></div>' +
       '<div class="qs-pay-row"><span>Transferencia bancaria</span><span>' + esc(Q.fmtMoney(t.transferTotal)) + '</span></div>' +
-      '<div class="qs-pay-row"><span>Tarjeta</span><span class="qs-pay-sub" style="text-align:right;color:var(--text)">' + esc(cardText) + '</span></div>' +
+      cardRowsHtml +
       cristalinoHtml +
       '</div>' +
       '<p class="qs-note" style="margin:.65rem 0 0">Sujeto a verificación técnica en óptica. Precios válidos hasta el ' + esc(snap.validaStr) + '.</p>';
+  }
+
+  function getCardGroups(t) {
+    return (t.cardGroups && t.cardGroups.length)
+      ? t.cardGroups
+      : [{ marca: 'General', options: t.cardOptions || [] }];
+  }
+
+  function formatCardOption(c, withTotal) {
+    var label = c.plan && !/^\d+\s*cuotas?$/i.test(c.plan)
+      ? c.plan
+      : (c.cuotas === 1 ? '1×' : c.cuotas + '×');
+    if (c.cuotas === 1) return label + ' ' + Q.fmtMoney(c.total);
+    return label + ' ' + Q.fmtMoney(c.cuotaMensual) + (withTotal ? ' (Tot ' + Q.fmtMoney(c.total) + ')' : '');
   }
 
   function generateQuotePngBlob() {
@@ -1105,7 +1121,9 @@
       lines.push(['Saldo a abonar', Q.fmtMoney(t.balanceBase), true]);
     }
 
-    var H = 430 + lines.length * 38 + t.cristalinoOptions.length * 42;
+    var cardGroups = getCardGroups(t);
+    var extraCardRows = Math.max(0, cardGroups.length - 1);
+    var H = 430 + lines.length * 38 + extraCardRows * 30 + t.cristalinoOptions.length * 42;
     var canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
@@ -1150,7 +1168,7 @@
 
     y += 8;
     ctx.fillStyle = '#f8fafc';
-    var payH = 126 + t.cristalinoOptions.length * 40;
+    var payH = 126 + extraCardRows * 28 + t.cristalinoOptions.length * 40;
     ctx.fillRect(pad, y, W - pad * 2, payH);
     ctx.strokeStyle = '#cbd5e1';
     ctx.strokeRect(pad, y, W - pad * 2, payH);
@@ -1172,12 +1190,14 @@
     ctx.fillText('Transferencia bancaria:', pad + 16, py);
     ctx.textAlign = 'right';
     ctx.fillText(Q.fmtMoney(t.transferTotal), W - pad - 16, py);
-    py += 28;
-    ctx.textAlign = 'left';
-    var cardsStr = t.cardOptions.map(function (c) {
-      return c.cuotas === 1 ? '1× ' + Q.fmtMoney(c.total) : c.cuotas + '× ' + Q.fmtMoney(c.cuotaMensual);
-    }).join('  ·  ');
-    ctx.fillText('Tarjeta: ' + cardsStr, pad + 16, py);
+    cardGroups.forEach(function (g) {
+      py += 28;
+      ctx.textAlign = 'left';
+      var cardsStr = g.options.map(function (c) { return formatCardOption(c, false); }).join('  ·  ');
+      var cardLine = 'Tarjeta ' + g.marca + ': ' + cardsStr;
+      if (cardLine.length > 88) cardLine = cardLine.slice(0, 87) + '…';
+      ctx.fillText(cardLine, pad + 16, py);
+    });
     t.cristalinoOptions.forEach(function (p) {
       py += 34;
       ctx.textAlign = 'left';

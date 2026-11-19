@@ -232,17 +232,19 @@ var SEED_CATALOG_ITEMS = [
   { codigo: 'LAB-OCU-156', nombre: 'Ocupacional 1.56 Blue Cut', tipo: 'Laboratorio', diseno: 'Ocupacional', indice: '1.56', tratamiento: 'Blue Cut', esfMin: -8, esfMax: 6, cilMax: 4, sumaMax: 10, precioMedioPar: 72000, activo: 'Sí' }
 ];
 
-var PAYMENT_HEADERS = ['Medio', 'Plan', 'Cuotas', 'Recargo_Porcentaje', 'Activo'];
+var PAYMENT_HEADERS = ['Medio', 'Marca_Banco', 'Plan', 'Cuotas', 'Recargo_Porcentaje', 'Activo'];
 
 var SEED_PAYMENT_ROWS = [
-  ['Efectivo', 'Contado', 1, -10, 'Sí'],
-  ['Transferencia', 'Contado', 1, 0, 'Sí'],
-  ['Tarjeta', '1 cuota', 1, 0, 'Sí'],
-  ['Tarjeta', '3 cuotas', 3, 15, 'Sí'],
-  ['Tarjeta', '6 cuotas', 6, 30, 'Sí'],
-  ['Plan Cristalino', '2 cuotas', 2, 12, 'Sí'],
-  ['Plan Cristalino', '3 cuotas', 3, 20, 'Sí'],
-  ['Plan Cristalino', '6 cuotas', 6, 42, 'Sí']
+  ['Efectivo', '', 'Contado', 1, -10, 'Sí'],
+  ['Transferencia', '', 'Contado', 1, 0, 'Sí'],
+  ['Tarjeta', 'Visa / Mastercard', '1 cuota', 1, 0, 'Sí'],
+  ['Tarjeta', 'Visa / Mastercard', '3 cuotas', 3, 15, 'Sí'],
+  ['Tarjeta', 'Visa / Mastercard', '6 cuotas', 6, 30, 'Sí'],
+  ['Tarjeta', 'Naranja X', 'Plan Z (3 cuotas)', 3, 10, 'Sí'],
+  ['Tarjeta', 'Naranja X', '6 cuotas', 6, 25, 'Sí'],
+  ['Plan Cristalino', '', '2 cuotas', 2, 12, 'Sí'],
+  ['Plan Cristalino', '', '3 cuotas', 3, 20, 'Sí'],
+  ['Plan Cristalino', '', '6 cuotas', 6, 42, 'Sí']
 ];
 
 function normalizeCatalogTipo_(raw) {
@@ -300,18 +302,30 @@ function parsePaymentRows(rows) {
     return {
       cashDiscountPct: 10,
       transferSurchargePct: 0,
-      cardPlans: [{ cuotas: 1, surchargePct: 0 }, { cuotas: 3, surchargePct: 15 }, { cuotas: 6, surchargePct: 30 }],
-      cristalinoPlans: [{ cuotas: 2, surchargePct: 12 }, { cuotas: 3, surchargePct: 20 }, { cuotas: 6, surchargePct: 42 }]
+      cardPlans: [
+        { marca: 'Visa / Mastercard', plan: '1 cuota', cuotas: 1, surchargePct: 0 },
+        { marca: 'Visa / Mastercard', plan: '3 cuotas', cuotas: 3, surchargePct: 15 },
+        { marca: 'Visa / Mastercard', plan: '6 cuotas', cuotas: 6, surchargePct: 30 },
+        { marca: 'Naranja X', plan: 'Plan Z (3 cuotas)', cuotas: 3, surchargePct: 10 },
+        { marca: 'Naranja X', plan: '6 cuotas', cuotas: 6, surchargePct: 25 }
+      ],
+      cristalinoPlans: [
+        { cuotas: 2, plan: '2 cuotas', surchargePct: 12 },
+        { cuotas: 3, plan: '3 cuotas', surchargePct: 20 },
+        { cuotas: 6, plan: '6 cuotas', surchargePct: 42 }
+      ]
     };
   }
   var headers = rows[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
   var idx = function (name) { return headers.indexOf(name.toLowerCase()); };
+  var marcaCol = idx('Marca_Banco');
   for (var i = 1; i < rows.length; i++) {
     var r = rows[i] || [];
     var medio = String(r[idx('Medio')] || '').trim();
     if (!medio) continue;
     var activo = String(r[idx('Activo')] || 'Sí').trim().toLowerCase();
     if (activo === 'no' || activo === 'false' || activo === '0') continue;
+    var marca = marcaCol >= 0 ? String(r[marcaCol] || '').trim() : '';
     var plan = String(r[idx('Plan')] || '').trim();
     var cuotas = Math.max(1, Math.round(numOrDefault_(r[idx('Cuotas')], 1)));
     var rec = numOrDefault_(r[idx('Recargo_Porcentaje')], 0);
@@ -322,13 +336,22 @@ function parsePaymentRows(rows) {
     } else if (/cristalino/i.test(medio)) {
       cfg.cristalinoPlans.push({ cuotas: cuotas, plan: plan || (cuotas + ' cuotas'), surchargePct: rec });
     } else if (/tarjeta/i.test(medio)) {
-      cfg.cardPlans.push({ cuotas: cuotas, plan: plan || (cuotas + ' cuotas'), surchargePct: rec });
+      var inferredMarca = marca || medio.replace(/^tarjeta\s*[-·:]?\s*/i, '').trim() || 'General';
+      cfg.cardPlans.push({ marca: inferredMarca, cuotas: cuotas, plan: plan || (cuotas + ' cuotas'), surchargePct: rec });
     }
   }
-  cfg.cardPlans.sort(function (a, b) { return a.cuotas - b.cuotas; });
+  var brandOrder = {};
+  var nextOrder = 0;
+  cfg.cardPlans.forEach(function (p) {
+    if (!(p.marca in brandOrder)) brandOrder[p.marca] = nextOrder++;
+  });
+  cfg.cardPlans.sort(function (a, b) {
+    if (a.marca !== b.marca) return brandOrder[a.marca] - brandOrder[b.marca];
+    return a.cuotas - b.cuotas;
+  });
   cfg.cristalinoPlans.sort(function (a, b) { return a.cuotas - b.cuotas; });
-  if (!cfg.cardPlans.length) cfg.cardPlans = [{ cuotas: 1, surchargePct: 0 }];
-  if (!cfg.cristalinoPlans.length) cfg.cristalinoPlans = [{ cuotas: 2, surchargePct: 12 }];
+  if (!cfg.cardPlans.length) cfg.cardPlans = [{ marca: 'General', plan: '1 cuota', cuotas: 1, surchargePct: 0 }];
+  if (!cfg.cristalinoPlans.length) cfg.cristalinoPlans = [{ cuotas: 2, plan: '2 cuotas', surchargePct: 12 }];
   return cfg;
 }
 

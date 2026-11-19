@@ -77,14 +77,16 @@ window.APP_CONFIG = {
     cashDiscountPct: 10,
     transferSurchargePct: 0,
     cardPlans: [
-      { cuotas: 1, surchargePct: 0 },
-      { cuotas: 3, surchargePct: 15 },
-      { cuotas: 6, surchargePct: 30 }
+      { marca: 'Visa / Mastercard', plan: '1 cuota', cuotas: 1, surchargePct: 0 },
+      { marca: 'Visa / Mastercard', plan: '3 cuotas', cuotas: 3, surchargePct: 15 },
+      { marca: 'Visa / Mastercard', plan: '6 cuotas', cuotas: 6, surchargePct: 30 },
+      { marca: 'Naranja X', plan: 'Plan Z (3 cuotas)', cuotas: 3, surchargePct: 10 },
+      { marca: 'Naranja X', plan: '6 cuotas', cuotas: 6, surchargePct: 25 }
     ],
     cristalinoPlans: [
-      { cuotas: 2, surchargePct: 12 },
-      { cuotas: 3, surchargePct: 20 },
-      { cuotas: 6, surchargePct: 42 }
+      { cuotas: 2, plan: '2 cuotas', surchargePct: 12 },
+      { cuotas: 3, plan: '3 cuotas', surchargePct: 20 },
+      { cuotas: 6, plan: '6 cuotas', surchargePct: 42 }
     ]
   }
 };

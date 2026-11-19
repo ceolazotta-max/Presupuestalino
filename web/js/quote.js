@@ -29,14 +29,16 @@
     cashDiscountPct: 10,
     transferSurchargePct: 0,
     cardPlans: [
-      { cuotas: 1, surchargePct: 0 },
-      { cuotas: 3, surchargePct: 15 },
-      { cuotas: 6, surchargePct: 30 }
+      { marca: 'Visa / Mastercard', plan: '1 cuota', cuotas: 1, surchargePct: 0 },
+      { marca: 'Visa / Mastercard', plan: '3 cuotas', cuotas: 3, surchargePct: 15 },
+      { marca: 'Visa / Mastercard', plan: '6 cuotas', cuotas: 6, surchargePct: 30 },
+      { marca: 'Naranja X', plan: 'Plan Z (3 cuotas)', cuotas: 3, surchargePct: 10 },
+      { marca: 'Naranja X', plan: '6 cuotas', cuotas: 6, surchargePct: 25 }
     ],
     cristalinoPlans: [
-      { cuotas: 2, surchargePct: 12 },
-      { cuotas: 3, surchargePct: 20 },
-      { cuotas: 6, surchargePct: 42 }
+      { cuotas: 2, plan: '2 cuotas', surchargePct: 12 },
+      { cuotas: 3, plan: '3 cuotas', surchargePct: 20 },
+      { cuotas: 6, plan: '6 cuotas', surchargePct: 42 }
     ]
   };
 
@@ -360,12 +362,29 @@
       var pct = Number(p.surchargePct) || 0;
       var total = Math.round(base * (1 + pct / 100));
       return {
+        marca: p.marca ? String(p.marca) : '',
+        plan: p.plan ? String(p.plan) : (cuotas === 1 ? '1 cuota' : cuotas + ' cuotas'),
         cuotas: cuotas,
         surchargePct: pct,
         total: total,
         cuotaMensual: Math.round(total / cuotas)
       };
     });
+  }
+
+  /** Agrupa opciones de tarjeta por marca/banco preservando el orden configurado. */
+  function groupCardPlans(cardOptions) {
+    var groups = [];
+    var byBrand = {};
+    (cardOptions || []).forEach(function (opt) {
+      var marca = opt.marca || 'General';
+      if (!byBrand[marca]) {
+        byBrand[marca] = { marca: marca, options: [] };
+        groups.push(byBrand[marca]);
+      }
+      byBrand[marca].options.push(opt);
+    });
+    return groups;
   }
 
   function calculateTotals(quoteState, paymentCfg) {
@@ -407,6 +426,7 @@
       cashTotal: cashTotal,
       transferTotal: transferTotal,
       cardOptions: buildPlans(balanceBase, cfg.cardPlans),
+      cardGroups: groupCardPlans(buildPlans(balanceBase, cfg.cardPlans)),
       cristalinoOptions: buildPlans(balanceBase, cfg.cristalinoPlans)
     };
   }
