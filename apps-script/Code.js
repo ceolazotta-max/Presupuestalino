@@ -282,6 +282,115 @@ function extractDriveId_(url) {
   return m ? m[1] : '';
 }
 
+function findUuidRowIndices_(sheet, uuid) {
+  if (!uuid || sheet.getLastRow() < 2) return [];
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var uuidCol = headers.indexOf('UUID');
+  var matches = sheet.createTextFinder(String(uuid)).matchEntireCell(true).findAll();
+  var seen = {};
+  var rows = [];
+  matches.forEach(function (cell) {
+    var r = cell.getRow();
+    if (r < 2) return;
+    if (uuidCol >= 0 && cell.getColumn() !== uuidCol + 1) return;
+    if (!seen[r]) { seen[r] = true; rows.push(r); }
+  });
+  rows.sort(function (a, b) { return a - b; });
+  return rows;
+}
+
+function writeRowWithHeaders_(sheet, targetRow, existingHeaders, record, baseRow) {
+  var built = buildRow(existingHeaders, record, baseRow);
+  if (built.added.length) {
+    sheet.getRange(1, 1, 1, built.headers.length).setValues([built.headers]).setFontWeight('bold');
+    if (!sheet.getFrozenRows()) sheet.setFrozenRows(1);
+    SpreadsheetApp.flush();
+  }
+  var range = sheet.getRange(targetRow, 1, 1, built.row.length);
+  range.setNumberFormat('General');
+  range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+  range.setValues([built.row]);
+  return built.headers;
+}
+
+function buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, includeTimestamp) {
+  var record = [];
+  if (includeTimestamp) record.push(['Timestamp', nowStr]);
+  record.push(
+    ['Última actualización', nowStr],
+    ['UUID', body.uuid],
+    ['Usuario', user.email],
+    ['Estado', statusLabel]
+  );
+
+  if (Array.isArray(extraFields) && extraFields.length) {
+    extraFields.forEach(function (f) { record.push([f.label, f.value]); });
+  }
+  if (body.rx && typeof body.rx === 'object') {
+    var rx = body.rx;
+    rxFields_().forEach(function (f) {
+      var v = toSheetValue(rx[f.key]);
+      if (f.key === 'paciente' && typeof v === 'string' && v) v = formatPersonName(v);
+      record.push([f.label, v]);
+    });
+    var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
+    record.push(
+      ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
+      ['Es receta (IA)', body.isRx === false ? 'No' : 'Sí'],
+      ['Corregido por usuario', body.corrected ? 'Sí' : 'No']
+    );
+  }
+
+  var cData = body.closure && typeof body.closure === 'object' ? body.closure : null;
+  if (cData) {
+    record.push(
+      ['Venta concretada', cData.sold === true ? 'Sí' : (cData.sold === false ? 'No' : '')],
+      ['Número OT', sanitizeCell(cData.ot, 60)],
+      ['Monto Venta', cData.monto !== '' && cData.monto != null ? toSheetValue(cData.monto, 30) : ''],
+      ['Tipo Lente Vendido', sanitizeCell(cData.tipoLente, 120)],
+      ['Motivo No Venta / Abandono', sanitizeCell(cData.motivo, 500)]
+    );
+  }
+
+  var tm = body.timings && typeof body.timings === 'object' ? body.timings : null;
+  if (tm) {
+    record.push(
+      ['Inicio Captura', sanitizeCell(tm.inicioIso, 40)],
+      ['Seg Paso 1 (OCR)', tm.paso1Sec != null ? toSheetValue(tm.paso1Sec, 20) : ''],
+      ['Seg Paso 2 (Revisión)', tm.paso2Sec != null ? toSheetValue(tm.paso2Sec, 20) : ''],
+      ['Seg Paso 3 (Datos)', tm.paso3Sec != null ? toSheetValue(tm.paso3Sec, 20) : ''],
+      ['Seg Paso 4 (Presupuesto)', tm.paso4Sec != null ? toSheetValue(tm.paso4Sec, 20) : ''],
+      ['Seg Cierre', tm.cierreSec != null ? toSheetValue(tm.cierreSec, 20) : ''],
+      ['Seg Totales', tm.totalSec != null ? toSheetValue(tm.totalSec, 20) : '']
+    );
+  }
+
+  record.push(['Foto', fotoUrl]);
+  return record;
+}
+
+function pushQuoteRecordFields_(record, q, idx) {
+  record.push(
+    ['Opción #', toSheetValue(q.opcion || (idx + 1), 10)],
+    ['Uso anteojo', sanitizeCell(q.uso, 40)],
+    ['Ojos cotizados', sanitizeCell(q.eyesMode, 40)],
+    ['½ Par OD', sanitizeCell(q.odNombre, 140)],
+    ['Tipo OD', sanitizeCell(q.odTipo, 30)],
+    ['Precio ½ OD', toSheetValue(q.odPrecio, 30)],
+    ['½ Par OI', sanitizeCell(q.oiNombre, 140)],
+    ['Tipo OI', sanitizeCell(q.oiTipo, 30)],
+    ['Precio ½ OI', toSheetValue(q.oiPrecio, 30)],
+    ['Armazón', sanitizeCell(q.armazon, 140)],
+    ['Precio Armazón', toSheetValue(q.armazonPrecio, 30)],
+    ['Descuento / OS', toSheetValue(q.descuento, 80)],
+    ['Seña', toSheetValue(q.sena, 30)],
+    ['Total Lista', toSheetValue(q.totalLista, 30)],
+    ['Total Efectivo (-10%)', toSheetValue(q.totalEfectivo, 30)],
+    ['Plan Cristalino', sanitizeCell(q.planCristalino, 300)]
+  );
+}
+
 function handleSave_(user, body) {
   var c = cfg_();
   if (!c.sheetId || !c.folderId) throw httpError_(500, 'Falta SHEET_ID o DRIVE_FOLDER_ID');
@@ -306,12 +415,12 @@ function handleSave_(user, body) {
 
     var lastCol = Math.max(sheet.getLastColumn(), 1);
     var existingHeaders = sheet.getLastRow() ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-    var found = sheet.getLastRow() ? sheet.createTextFinder(body.uuid).matchEntireCell(true).findNext() : null;
-    var rowIdx = found ? found.getRow() : 0;
-    var existingRow = found ? sheet.getRange(rowIdx, 1, 1, lastCol).getValues()[0] : [];
+    var foundRows = findUuidRowIndices_(sheet, body.uuid);
+    var found = foundRows.length > 0;
+    var existingRow0 = found ? sheet.getRange(foundRows[0], 1, 1, lastCol).getValues()[0] : [];
 
     var fotoCol = existingHeaders.indexOf('Foto');
-    var fotoUrl = (found && fotoCol >= 0) ? String(existingRow[fotoCol] || '') : '';
+    var fotoUrl = (found && fotoCol >= 0) ? String(existingRow0[fotoCol] || '') : '';
     var fileName = '';
 
     if (!fotoUrl) {
@@ -343,79 +452,29 @@ function handleSave_(user, body) {
     else if (stage === 'abandonado') statusLabel = 'ABANDONADO';
     else if (stage === 'cerrado') statusLabel = (cData && cData.sold) ? 'VENTA CONCRETADA' : 'NO CONCRETADA';
 
-    var record = [];
-    if (!found) record.push(['Timestamp', nowStr]);
-    record.push(
-      ['Última actualización', nowStr],
-      ['UUID', body.uuid],
-      ['Usuario', user.email],
-      ['Estado', statusLabel]
-    );
-
-    if (Array.isArray(body.extraFields) && body.extraFields.length) {
-      sanitizeExtraFields(body.extraFields).forEach(function (f) { record.push([f.label, f.value]); });
+    // Sincronizar Nombre cliente y Nombre paciente si uno falta.
+    var extraFields = Array.isArray(body.extraFields) ? sanitizeExtraFields(body.extraFields) : [];
+    var extraNameObj = null;
+    for (var ei = 0; ei < extraFields.length; ei++) {
+      if (extraFields[ei].label === 'Nombre cliente') { extraNameObj = extraFields[ei]; break; }
     }
-    if (body.rx && typeof body.rx === 'object') {
-      var rx = body.rx;
-      rxFields_().forEach(function (f) { record.push([f.label, toSheetValue(rx[f.key])]); });
-      var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
-      record.push(
-        ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
-        ['Es receta (IA)', body.isRx === false ? 'No' : 'Sí'],
-        ['Corregido por usuario', body.corrected ? 'Sí' : 'No']
-      );
+    var rxPaciente = (body.rx && body.rx.paciente) ? formatPersonName(body.rx.paciente) : '';
+    var resolvedPersonName = (extraNameObj && extraNameObj.value) || rxPaciente || (name !== 'Pendiente' ? formatPersonName(name) : '');
+    if (resolvedPersonName) {
+      if (extraNameObj) {
+        if (!extraNameObj.value) extraNameObj.value = resolvedPersonName;
+      } else {
+        extraFields.unshift({ label: 'Nombre cliente', value: resolvedPersonName });
+      }
+      if (body.rx && typeof body.rx === 'object' && !body.rx.paciente) {
+        body.rx.paciente = resolvedPersonName;
+      }
     }
-
-    var q = body.quoteSummary && typeof body.quoteSummary === 'object' ? body.quoteSummary : null;
-    if (q) {
-      record.push(
-        ['Uso anteojo', sanitizeCell(q.uso, 40)],
-        ['Ojos cotizados', sanitizeCell(q.eyesMode, 40)],
-        ['½ Par OD', sanitizeCell(q.odNombre, 140)],
-        ['Tipo OD', sanitizeCell(q.odTipo, 30)],
-        ['Precio ½ OD', toSheetValue(q.odPrecio, 30)],
-        ['½ Par OI', sanitizeCell(q.oiNombre, 140)],
-        ['Tipo OI', sanitizeCell(q.oiTipo, 30)],
-        ['Precio ½ OI', toSheetValue(q.oiPrecio, 30)],
-        ['Armazón', sanitizeCell(q.armazon, 140)],
-        ['Precio Armazón', toSheetValue(q.armazonPrecio, 30)],
-        ['Descuento / OS', toSheetValue(q.descuento, 80)],
-        ['Seña', toSheetValue(q.sena, 30)],
-        ['Total Lista', toSheetValue(q.totalLista, 30)],
-        ['Total Efectivo (-10%)', toSheetValue(q.totalEfectivo, 30)],
-        ['Plan Cristalino', sanitizeCell(q.planCristalino, 300)]
-      );
-    }
-
-    if (cData) {
-      record.push(
-        ['Venta concretada', cData.sold === true ? 'Sí' : (cData.sold === false ? 'No' : '')],
-        ['Número OT', sanitizeCell(cData.ot, 60)],
-        ['Monto Venta', cData.monto !== '' && cData.monto != null ? toSheetValue(cData.monto, 30) : ''],
-        ['Tipo Lente Vendido', sanitizeCell(cData.tipoLente, 120)],
-        ['Motivo No Venta / Abandono', sanitizeCell(cData.motivo, 500)]
-      );
-    }
-
-    var tm = body.timings && typeof body.timings === 'object' ? body.timings : null;
-    if (tm) {
-      record.push(
-        ['Inicio Captura', sanitizeCell(tm.inicioIso, 40)],
-        ['Seg Paso 1 (OCR)', tm.paso1Sec != null ? toSheetValue(tm.paso1Sec, 20) : ''],
-        ['Seg Paso 2 (Revisión)', tm.paso2Sec != null ? toSheetValue(tm.paso2Sec, 20) : ''],
-        ['Seg Paso 3 (Datos)', tm.paso3Sec != null ? toSheetValue(tm.paso3Sec, 20) : ''],
-        ['Seg Paso 4 (Presupuesto)', tm.paso4Sec != null ? toSheetValue(tm.paso4Sec, 20) : ''],
-        ['Seg Cierre', tm.cierreSec != null ? toSheetValue(tm.cierreSec, 20) : ''],
-        ['Seg Totales', tm.totalSec != null ? toSheetValue(tm.totalSec, 20) : '']
-      );
-    }
-
-    record.push(['Foto', fotoUrl]);
 
     if (Array.isArray(body.newCatalogItems) && body.newCatalogItems.length) {
       var catSheet = ensureCatalogSheet_(ss);
       var addedCat = [];
-      body.newCatalogItems.slice(0, 4).forEach(function (it, i) {
+      body.newCatalogItems.slice(0, 8).forEach(function (it, i) {
         var clean = sanitizeCatalogItem(it, stamp + '-' + (i + 1));
         if (clean) addedCat.push(catalogItemToRow(clean));
       });
@@ -425,21 +484,47 @@ function handleSave_(user, body) {
       }
     }
 
-    var built = buildRow(existingHeaders, record, existingRow);
-    if (built.added.length) {
-      sheet.getRange(1, 1, 1, built.headers.length).setValues([built.headers]).setFontWeight('bold');
-      if (!sheet.getFrozenRows()) sheet.setFrozenRows(1);
-      SpreadsheetApp.flush();
+    var quoteList = (Array.isArray(body.quoteItems) && body.quoteItems.length)
+      ? body.quoteItems
+      : (body.quoteSummary && typeof body.quoteSummary === 'object' ? [body.quoteSummary] : []);
+    var writtenRows = [];
+
+    if (quoteList.length > 0) {
+      for (var qi = 0; qi < quoteList.length; qi++) {
+        var rowRecord = buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, !found);
+        pushQuoteRecordFields_(rowRecord, quoteList[qi], qi);
+        var isExisting = qi < foundRows.length;
+        var targetRow = isExisting ? foundRows[qi] : (Math.max(sheet.getLastRow(), 1) + 1);
+        var baseRow = isExisting
+          ? sheet.getRange(targetRow, 1, 1, Math.max(sheet.getLastColumn(), existingHeaders.length, 1)).getValues()[0]
+          : existingRow0;
+        existingHeaders = writeRowWithHeaders_(sheet, targetRow, existingHeaders, rowRecord, baseRow);
+        writtenRows.push(targetRow);
+      }
+      if (foundRows.length > quoteList.length) {
+        for (var delIdx = foundRows.length - 1; delIdx >= quoteList.length; delIdx--) {
+          sheet.deleteRow(foundRows[delIdx]);
+        }
+      }
+    } else if (found) {
+      for (var fi = 0; fi < foundRows.length; fi++) {
+        var rIdx = foundRows[fi];
+        var curRow = sheet.getRange(rIdx, 1, 1, Math.max(sheet.getLastColumn(), existingHeaders.length, 1)).getValues()[0];
+        var updRecord = buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, false);
+        existingHeaders = writeRowWithHeaders_(sheet, rIdx, existingHeaders, updRecord, curRow);
+        writtenRows.push(rIdx);
+      }
+    } else {
+      var newRowNum = Math.max(sheet.getLastRow(), 1) + 1;
+      var insRecord = buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, true);
+      existingHeaders = writeRowWithHeaders_(sheet, newRowNum, existingHeaders, insRecord, []);
+      writtenRows.push(newRowNum);
     }
-    var targetRow = found ? rowIdx : (Math.max(sheet.getLastRow(), 1) + 1);
-    var range = sheet.getRange(targetRow, 1, 1, built.row.length);
-    range.setNumberFormat('General');
-    range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
-    range.setValues([built.row]);
 
     return {
       ok: true,
-      fila: targetRow,
+      fila: writtenRows[0] || 0,
+      filas: writtenRows,
       fotoUrl: fotoUrl,
       fotoNombre: fileName,
       estado: statusLabel,
@@ -474,6 +559,62 @@ function json_(obj) {
 
 // ---------- Diagnóstico (ejecutar a mano desde el editor) ----------
 
+/** Migra encabezados renombrados y elimina columnas obsoletas en la hoja principal. */
+function cleanupMainSheetColumns_(sheet) {
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow === 0 || lastCol === 0) return [];
+
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headers = values[0].map(function (h) { return String(h || '').trim(); });
+  var actions = [];
+  var colsToDelete = [];
+
+  function mergeOrRename(srcName, dstName) {
+    var srcIdx = headers.indexOf(srcName);
+    if (srcIdx < 0) return;
+    var dstIdx = headers.indexOf(dstName);
+    if (dstIdx >= 0 && dstIdx !== srcIdx) {
+      if (lastRow > 1) {
+        var colOut = [];
+        for (var r = 0; r < lastRow; r++) {
+          var dstVal = values[r][dstIdx];
+          var srcVal = values[r][srcIdx];
+          if (r > 0 && (dstVal === '' || dstVal == null) && srcVal !== '' && srcVal != null) {
+            values[r][dstIdx] = srcVal;
+          }
+          colOut.push([values[r][dstIdx]]);
+        }
+        sheet.getRange(1, dstIdx + 1, lastRow, 1).setValues(colOut);
+      }
+      if (colsToDelete.indexOf(srcIdx) < 0) colsToDelete.push(srcIdx);
+      actions.push(srcName + ' -> ' + dstName + ' (fusionada)');
+    } else {
+      headers[srcIdx] = dstName;
+      values[0][srcIdx] = dstName;
+      sheet.getRange(1, srcIdx + 1).setValue(dstName);
+      actions.push(srcName + ' -> ' + dstName + ' (renombrada)');
+    }
+  }
+
+  mergeOrRename('Apellido y Nombre cliente', 'Nombre cliente');
+  mergeOrRename('Nombre', 'Nombre Recomendador');
+
+  ['¿De dónde nos conoce?', 'Quién', 'Cuál', 'Quién / Cuál', 'OCR Crudo'].forEach(function (obsolete) {
+    for (var i = 0; i < headers.length; i++) {
+      if (headers[i] === obsolete && colsToDelete.indexOf(i) < 0) {
+        colsToDelete.push(i);
+        actions.push('Eliminada: ' + obsolete);
+      }
+    }
+  });
+
+  colsToDelete.sort(function (a, b) { return b - a; }).forEach(function (colIdx) {
+    sheet.deleteColumn(colIdx + 1);
+  });
+  return actions;
+}
+
 /** Verifica configuración, autoriza permisos y prueba la API key. Ver logs. */
 function setupCheck() {
   var c = cfg_();
@@ -484,6 +625,11 @@ function setupCheck() {
   try {
     var ss = SpreadsheetApp.openById(c.sheetId);
     out.push('Sheet: ' + ss.getName());
+    var mainSheet = c.sheetName ? ss.getSheetByName(c.sheetName) : ss.getSheets()[0];
+    if (mainSheet) {
+      var cleaned = cleanupMainSheetColumns_(mainSheet);
+      out.push('Columnas limpiadas: ' + (cleaned.length ? cleaned.join(', ') : '(sin cambios)'));
+    }
     var catSheet = ensureCatalogSheet_(ss);
     var catCount = parseCatalogRows(catSheet.getDataRange().getValues()).length;
     out.push('Catalogo: OK (' + catCount + ' productos activos)');

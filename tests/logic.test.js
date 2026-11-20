@@ -362,11 +362,37 @@ test('Logic.formatPersonName y Logic.toSheetValue', () => {
   const ext = L.sanitizeExtraFields([
     { key: 'nombre', label: 'Apellido y Nombre cliente', value: 'GOMEZ, ANA' },
     { key: 'derivacion_doctor', label: 'Nombre Doctor', value: 'dr. lopez carlos' },
+    { key: 'origen_nombre', label: 'Nombre', value: 'MARTINEZ, LUIS' },
     { key: 'notas', label: 'Notas', value: '' }
   ]);
   assert.deepEqual(ext, [
-    { label: 'Apellido y Nombre cliente', value: 'Gomez Ana' },
+    { label: 'Nombre cliente', value: 'Gomez Ana' },
     { label: 'Nombre Doctor', value: 'Lopez Carlos' },
+    { label: 'Nombre Recomendador', value: 'Martinez Luis' },
     { label: 'Notas', value: '' }
   ]);
+});
+
+test('Opciones múltiples independientes generan filas separadas con Opción # y mismo UUID', () => {
+  const payCfg = L.parsePaymentRows([L.PAYMENT_HEADERS, ...L.SEED_PAYMENT_ROWS]);
+  const shared = { frame: { mode: 'nuevo', price: 30000 }, discount: 5000, deposit: 20000 };
+  const opt1 = Q.calculateTotals({ eyesMode: 'both', od: { price: 26000 }, oi: { price: 26000 }, ...shared }, payCfg);
+  const opt2 = Q.calculateTotals({ eyesMode: 'od', od: { price: 42000 }, oi: { price: 0 }, ...shared }, payCfg);
+  assert.equal(opt1.listTotal, 77000);
+  assert.equal(opt1.balanceBase, 57000);
+  assert.equal(opt2.listTotal, 67000);
+  assert.equal(opt2.balanceBase, 47000);
+
+  const row1 = L.buildRow(
+    ['UUID', 'Nombre cliente', 'Opción #', 'Total Lista'],
+    [['UUID', 'u-multi'], ['Nombre cliente', 'Gomez Ana'], ['Opción #', 1], ['Total Lista', opt1.listTotal]],
+    []
+  );
+  const row2 = L.buildRow(
+    row1.headers,
+    [['UUID', 'u-multi'], ['Nombre cliente', 'Gomez Ana'], ['Opción #', 2], ['Total Lista', opt2.listTotal]],
+    row1.row
+  );
+  assert.deepEqual(row1.row, ['u-multi', 'Gomez Ana', 1, 77000]);
+  assert.deepEqual(row2.row, ['u-multi', 'Gomez Ana', 2, 67000]);
 });

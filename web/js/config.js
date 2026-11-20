@@ -18,7 +18,7 @@ window.APP_CONFIG = {
 
   // Formulario de datos adicionales. type: text | tel | email | textarea | select
   EXTRA_FIELDS: [
-    { key: 'nombre', label: 'Apellido y Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
+    { key: 'nombre', label: 'Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
     { key: 'telefono', label: 'Teléfono', type: 'tel', required: true, autocomplete: 'tel' },
     { key: 'email', label: 'Email cliente', type: 'email', required: true, autocomplete: 'email' },
     {
@@ -44,7 +44,7 @@ window.APP_CONFIG = {
     },
     {
       key: 'origen_nombre',
-      label: 'Nombre',
+      label: 'Nombre Recomendador',
       type: 'text',
       required: true,
       showWhen: { field: 'origen', values: ['Recomendación externa', 'Recomendación interna'] }

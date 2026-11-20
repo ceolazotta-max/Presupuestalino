@@ -201,9 +201,15 @@ function rateKey(action, email, nowMs) {
 function sanitizeExtraFields(list) {
   if (!Array.isArray(list)) return [];
   return list.slice(0, 20).map(function (f) {
+    var key = f && f.key;
     var label = String((f && f.label) || '').replace(/[^\p{L}\p{N} ._()/?¿-]/gu, '').trim().slice(0, 40);
+    if (key === 'nombre' || /^apellido y nombre cliente$/i.test(label)) {
+      label = 'Nombre cliente';
+    } else if (key === 'origen_nombre' || /^nombre$/i.test(label)) {
+      label = 'Nombre Recomendador';
+    }
     var val = toSheetValue(f && f.value);
-    var isName = (f && (f.key === 'nombre' || f.key === 'derivacion_doctor' || f.key === 'origen_nombre')) || /nombre|doctor/i.test(label);
+    var isName = (f && (key === 'nombre' || key === 'derivacion_doctor' || key === 'origen_nombre')) || /nombre|doctor|recomendador/i.test(label);
     if (typeof val === 'string' && val && isName) val = formatPersonName(val);
     return { label: label, value: val };
   }).filter(function (f) { return f.label; });

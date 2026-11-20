@@ -8,18 +8,61 @@
   var $ = function (sel) { return document.querySelector(sel); };
   var DRAFT_KEY = 'presupuestalino_draft_v1';
 
+  function defaultQuoteEye() {
+    return {
+      mode: 'catalog',
+      codigo: '',
+      price: 0,
+      manual: { nombre: '', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: '', saveToCatalog: false }
+    };
+  }
+
+  function defaultQuoteItem(uso) {
+    return {
+      uso: uso || 'lejos',
+      eyesMode: 'both',
+      od: defaultQuoteEye(),
+      oi: defaultQuoteEye()
+    };
+  }
+
   function defaultQuoteState() {
     return {
-      uso: 'lejos',
-      eyesMode: 'both',
-      od: { mode: 'catalog', codigo: '', price: 0, manual: { nombre: '', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: '', saveToCatalog: false } },
-      oi: { mode: 'catalog', codigo: '', price: 0, manual: { nombre: '', tipo: 'Stock', diseno: 'Monofocal', indice: '1.50', tratamiento: '', saveToCatalog: false } },
+      items: [defaultQuoteItem('lejos')],
       frameModeSelect: 'none',
       frame: { mode: 'none', rimType: 'completo', detail: '', price: 0 },
       discount: 0,
       discountNote: '',
       deposit: 0
     };
+  }
+
+  function normalizeQuoteEye(eye) {
+    var e = Object.assign(defaultQuoteEye(), eye || {});
+    e.manual = Object.assign(defaultQuoteEye().manual, (eye && eye.manual) || {});
+    return e;
+  }
+
+  function normalizeQuoteState(raw) {
+    var q = Object.assign(defaultQuoteState(), raw || {});
+    q.frame = Object.assign(defaultQuoteState().frame, (raw && raw.frame) || {});
+    if (!Array.isArray(q.items) || !q.items.length) {
+      var legacy = defaultQuoteItem((raw && raw.uso) || 'lejos');
+      if (raw && raw.eyesMode) legacy.eyesMode = raw.eyesMode;
+      if (raw && raw.od) legacy.od = normalizeQuoteEye(raw.od);
+      if (raw && raw.oi) legacy.oi = normalizeQuoteEye(raw.oi);
+      q.items = [legacy];
+    } else {
+      q.items = q.items.map(function (it) {
+        return {
+          uso: (it && it.uso) || 'lejos',
+          eyesMode: (it && it.eyesMode) || 'both',
+          od: normalizeQuoteEye(it && it.od),
+          oi: normalizeQuoteEye(it && it.oi)
+        };
+      });
+    }
+    return q;
   }
 
   function defaultTimers() {
@@ -127,7 +170,7 @@
       state.image = d.image;
       state.ocr = d.ocr;
       state.prefilledName = d.prefilledName || '';
-      state.quote = Object.assign(defaultQuoteState(), d.quote || {});
+      state.quote = normalizeQuoteState(d.quote);
       state.quoteInitialized = Boolean(d.quoteInitialized);
       state.budgetIssued = Boolean(d.budgetIssued);
       state.photoUploaded = Boolean(d.photoUploaded);
@@ -600,6 +643,7 @@
       rx: rxValues,
       extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
         .map(function (x) { return x.texto.trim(); }),
+      extraFields: collectExtraFields(),
       isRx: !(state.ocr.rx && state.ocr.rx.es_receta_optica === false),
       corrected: wasCorrected(rxValues),
       timings: buildTimingsPayload()
@@ -764,7 +808,7 @@
     var rx = collectRx();
     if (!state.quoteInitialized) {
       state.quote = defaultQuoteState();
-      state.quote.uso = Q.inferDefaultUso(rx);
+      state.quote.items[0].uso = Q.inferDefaultUso(rx);
       state.quoteInitialized = true;
     }
     syncQuoteControls();
@@ -782,14 +826,113 @@
     return orig;
   }
 
-  function syncEyeCard(eye, eyeRx, pairMinRank) {
-    var sel = state.quote[eye];
-    var uso = state.quote.uso;
+  function createEyeCardHtml(eye) {
+    var upper = eye === 'od' ? 'OD (Ojo Derecho)' : 'OI (Ojo Izquierdo)';
+    var short = eye.toUpperCase();
+    var ph = eye === 'od' ? 'Ej. Orgánico 1.60 Blue Cut' : 'Ej. Tallado 1.67 Antirreflejo';
+    return '<div class="eye-card" data-eye="' + eye + '">' +
+      '<div class="eye-head">' +
+      '<h3>½ Par ' + upper + '</h3>' +
+      '<span class="badge" data-role="badge"></span>' +
+      '</div>' +
+      '<p class="rx-summary" data-role="rx"></p>' +
+      '<label class="field"><span>Cristal ' + short + '</span><select data-role="prod"></select></label>' +
+      '<div class="manual-box" data-role="manual-box" hidden>' +
+      '<label class="field"><span>Nombre / Descripción *</span><input type="text" maxlength="120" data-role="man-nombre" placeholder="' + ph + '"></label>' +
+      '<div class="rx-list">' +
+      '<label class="field"><span>Tipo</span><select data-role="man-tipo"><option value="Stock">Stock</option><option value="Rango Extendido">Rango Extendido</option><option value="Laboratorio">Laboratorio</option></select></label>' +
+      '<label class="field"><span>Diseño</span><select data-role="man-diseno"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>' +
+      '<label class="field"><span>Índice</span><select data-role="man-indice"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>' +
+      '<label class="field"><span>Tratamiento</span><input type="text" maxlength="40" data-role="man-trat" placeholder="Blanco / AR / Blue Cut / Foto"></label>' +
+      '</div>' +
+      '<label class="check-field"><input type="checkbox" data-role="man-save"> <span>Guardar este cristal en el Catálogo para próximas veces</span></label>' +
+      '</div>' +
+      '<label class="field"><span>Precio ½ par ' + short + ' ($)</span><input type="number" min="0" step="100" inputmode="numeric" data-role="price"></label>' +
+      '</div>';
+  }
+
+  function renderQuoteItemBlocks() {
+    var root = $('#q-items-list');
+    var items = state.quote.items;
+    if (root.children.length === items.length) return;
+    root.innerHTML = '';
+    items.forEach(function (_, idx) {
+      var block = document.createElement('div');
+      block.className = 'quote-item-block';
+      block.dataset.itemIdx = String(idx);
+      block.innerHTML =
+        '<div class="quote-item-head">' +
+        '<span class="quote-item-title">Opción ' + (idx + 1) + '</span>' +
+        '<button class="btn ghost btn-remove-item" type="button" data-role="remove">✕ Eliminar opción</button>' +
+        '</div>' +
+        '<div class="rx-list">' +
+        '<label class="field"><span>Uso del anteojo</span><select data-role="uso">' +
+        '<option value="lejos">Lejos</option>' +
+        '<option value="cerca">Cerca</option>' +
+        '<option value="multifocal">Multifocal</option>' +
+        '<option value="bifocal">Bifocal</option>' +
+        '<option value="ocupacional">Ocupacional</option>' +
+        '</select></label>' +
+        '<label class="field"><span>Ojos a cotizar</span><select data-role="eyes">' +
+        '<option value="both">Ambos ojos (OD + OI)</option>' +
+        '<option value="od">Solo OD (½ par derecho)</option>' +
+        '<option value="oi">Solo OI (½ par izquierdo)</option>' +
+        '</select></label>' +
+        '</div>' +
+        '<div class="eyes-grid">' + createEyeCardHtml('od') + createEyeCardHtml('oi') + '</div>';
+
+      block.querySelector('[data-role="remove"]').addEventListener('click', function () {
+        if (state.quote.items.length <= 1) return;
+        state.quote.items.splice(idx, 1);
+        syncQuoteControls();
+        saveDraft();
+      });
+      block.querySelector('[data-role="uso"]').addEventListener('change', function (e) {
+        var item = state.quote.items[idx];
+        item.uso = e.target.value;
+        var dis = Q.USO_TO_DISENO[item.uso] || 'Monofocal';
+        item.od.manual.diseno = dis;
+        item.oi.manual.diseno = dis;
+        if (dis !== 'Monofocal') {
+          item.od.manual.tipo = 'Laboratorio';
+          item.oi.manual.tipo = 'Laboratorio';
+        }
+        syncQuoteControls();
+        saveDraft();
+      });
+      block.querySelector('[data-role="eyes"]').addEventListener('change', function (e) {
+        state.quote.items[idx].eyesMode = e.target.value;
+        syncQuoteControls();
+        saveDraft();
+      });
+      ['od', 'oi'].forEach(function (eye) {
+        var card = block.querySelector('[data-eye="' + eye + '"]');
+        card.querySelector('[data-role="prod"]').addEventListener('change', function () {
+          onEyeSelectChange(block, idx, eye);
+        });
+        ['man-nombre', 'man-tipo', 'man-diseno', 'man-indice', 'man-trat', 'man-save', 'price'].forEach(function (role) {
+          var el = card.querySelector('[data-role="' + role + '"]');
+          var evt = (el.tagName === 'SELECT' || el.type === 'checkbox') ? 'change' : 'input';
+          el.addEventListener(evt, function () {
+            readManualAndPrice(block, idx, eye);
+            refreshQuotePreview();
+          });
+        });
+      });
+
+      root.appendChild(block);
+    });
+  }
+
+  function syncEyeCard(block, item, eye, eyeRx, pairMinRank) {
+    var sel = item[eye];
+    var uso = item.uso;
     var eyeTier = Q.getEyeMinTier(eyeRx, uso);
     var reqRank = Math.max(eyeTier.rank, pairMinRank || 1);
+    var card = block.querySelector('[data-eye="' + eye + '"]');
 
-    $('#q-rx-' + eye).textContent = formatEyeRxLine(eyeRx);
-    var badge = $('#q-badge-' + eye);
+    card.querySelector('[data-role="rx"]').textContent = formatEyeRxLine(eyeRx);
+    var badge = card.querySelector('[data-role="badge"]');
     if (reqRank === 3) {
       badge.className = 'badge lab';
       badge.textContent = eyeTier.rank === 3 ? ('Solo Laboratorio: ' + eyeTier.reason) : 'Laboratorio (por otro ojo)';
@@ -801,7 +944,7 @@
       badge.textContent = 'Apto Stock, Rango Ext. y Lab';
     }
 
-    var select = $('#q-prod-' + eye);
+    var select = card.querySelector('[data-role="prod"]');
     select.innerHTML = '';
     var defOpt = document.createElement('option');
     defOpt.value = '';
@@ -835,8 +978,8 @@
     }
 
     var isManual = sel.mode === 'manual';
-    $('#q-manual-' + eye).hidden = !isManual;
-    var tipoSel = $('#q-man-tipo-' + eye);
+    card.querySelector('[data-role="manual-box"]').hidden = !isManual;
+    var tipoSel = card.querySelector('[data-role="man-tipo"]');
     var optStk = tipoSel.querySelector('option[value="Stock"]');
     var optExt = tipoSel.querySelector('option[value="Rango Extendido"]');
     optStk.hidden = reqRank > 1;
@@ -846,31 +989,38 @@
     if (reqRank === 3) sel.manual.tipo = 'Laboratorio';
     else if (reqRank === 2 && sel.manual.tipo === 'Stock') sel.manual.tipo = 'Rango Extendido';
 
-    $('#q-man-nombre-' + eye).value = sel.manual.nombre;
+    card.querySelector('[data-role="man-nombre"]').value = sel.manual.nombre;
     tipoSel.value = sel.manual.tipo;
-    var disenoSel = $('#q-man-diseno-' + eye);
+    var disenoSel = card.querySelector('[data-role="man-diseno"]');
     if (!sel.manual.diseno) sel.manual.diseno = Q.USO_TO_DISENO[uso] || 'Monofocal';
     disenoSel.value = sel.manual.diseno;
-    $('#q-man-indice-' + eye).value = sel.manual.indice;
-    $('#q-man-trat-' + eye).value = sel.manual.tratamiento;
-    $('#q-man-save-' + eye).checked = Boolean(sel.manual.saveToCatalog);
-    $('#q-price-' + eye).value = sel.price ? String(sel.price) : '';
+    card.querySelector('[data-role="man-indice"]').value = sel.manual.indice;
+    card.querySelector('[data-role="man-trat"]').value = sel.manual.tratamiento;
+    card.querySelector('[data-role="man-save"]').checked = Boolean(sel.manual.saveToCatalog);
+    card.querySelector('[data-role="price"]').value = sel.price ? String(sel.price) : '';
   }
 
   function syncQuoteControls() {
     var q = state.quote;
-    $('#q-uso').value = q.uso;
-    $('#q-eyes').value = q.eyesMode;
-    $('#q-card-od').hidden = q.eyesMode === 'oi';
-    $('#q-card-oi').hidden = q.eyesMode === 'od';
+    renderQuoteItemBlocks();
+    var rx = collectRx();
+    q.items.forEach(function (item, idx) {
+      var block = $('#q-items-list').querySelector('.quote-item-block[data-item-idx="' + idx + '"]');
+      if (!block) return;
+      block.querySelector('[data-role="uso"]').value = item.uso;
+      block.querySelector('[data-role="eyes"]').value = item.eyesMode;
+      block.querySelector('[data-role="remove"]').hidden = q.items.length <= 1;
+      block.querySelector('[data-eye="od"]').hidden = item.eyesMode === 'oi';
+      block.querySelector('[data-eye="oi"]').hidden = item.eyesMode === 'od';
 
-    var eff = Q.resolveEffectiveRx(collectRx(), q.uso);
-    var tOd = Q.getEyeMinTier(eff.od, q.uso).rank;
-    var tOi = Q.getEyeMinTier(eff.oi, q.uso).rank;
-    var pairMinRank = q.eyesMode === 'both' ? Math.max(tOd, tOi) : 1;
+      var eff = Q.resolveEffectiveRx(rx, item.uso);
+      var tOd = Q.getEyeMinTier(eff.od, item.uso).rank;
+      var tOi = Q.getEyeMinTier(eff.oi, item.uso).rank;
+      var pairMinRank = item.eyesMode === 'both' ? Math.max(tOd, tOi) : 1;
 
-    syncEyeCard('od', eff.od, q.eyesMode === 'both' ? pairMinRank : tOd);
-    syncEyeCard('oi', eff.oi, q.eyesMode === 'both' ? pairMinRank : tOi);
+      syncEyeCard(block, item, 'od', eff.od, item.eyesMode === 'both' ? pairMinRank : tOd);
+      syncEyeCard(block, item, 'oi', eff.oi, item.eyesMode === 'both' ? pairMinRank : tOi);
+    });
 
     $('#q-frame-mode').value = q.frameModeSelect;
     $('#q-frame-rim').value = q.frame.rimType;
@@ -904,18 +1054,19 @@
     $('#q-frame-price-wrap').hidden = state.quote.frame.mode !== 'nuevo';
   }
 
-  function onEyeSelectChange(eye) {
-    var val = $('#q-prod-' + eye).value;
-    var sel = state.quote[eye];
-    var eff = Q.resolveEffectiveRx(collectRx(), state.quote.uso);
-    var tOd = Q.getEyeMinTier(eff.od, state.quote.uso).rank;
-    var tOi = Q.getEyeMinTier(eff.oi, state.quote.uso).rank;
-    var pairMinRank = state.quote.eyesMode === 'both' ? Math.max(tOd, tOi) : (eye === 'od' ? tOd : tOi);
+  function onEyeSelectChange(block, itemIdx, eye) {
+    var item = state.quote.items[itemIdx];
+    var val = block.querySelector('[data-eye="' + eye + '"] [data-role="prod"]').value;
+    var sel = item[eye];
+    var eff = Q.resolveEffectiveRx(collectRx(), item.uso);
+    var tOd = Q.getEyeMinTier(eff.od, item.uso).rank;
+    var tOi = Q.getEyeMinTier(eff.oi, item.uso).rank;
+    var pairMinRank = item.eyesMode === 'both' ? Math.max(tOd, tOi) : (eye === 'od' ? tOd : tOi);
 
     if (val === '__manual__') {
       sel.mode = 'manual';
       sel.codigo = '';
-      sel.manual.diseno = Q.USO_TO_DISENO[state.quote.uso] || 'Monofocal';
+      sel.manual.diseno = Q.USO_TO_DISENO[item.uso] || 'Monofocal';
       if (sel.manual.diseno !== 'Monofocal' || pairMinRank === 3) sel.manual.tipo = 'Laboratorio';
       else if (pairMinRank === 2) sel.manual.tipo = 'Rango Extendido';
     } else {
@@ -925,17 +1076,17 @@
       sel.price = prod ? prod.precioMedioPar : 0;
 
       // En ambos ojos, sincronizar el rango (Stock / Rango Extendido / Laboratorio) del otro ojo si difiere.
-      if (state.quote.eyesMode === 'both' && prod) {
+      if (item.eyesMode === 'both' && prod) {
         var otherEye = eye === 'od' ? 'oi' : 'od';
-        var otherSel = state.quote[otherEye];
+        var otherSel = item[otherEye];
         var otherProd = Q.resolveEyeProduct(otherSel, state.catalog);
         if (!otherProd || otherProd.tipo !== prod.tipo) {
           if (otherSel.mode === 'manual') {
             otherSel.manual.tipo = prod.tipo;
           } else {
-            var sameOk = Q.checkProductForEye(prod, eff[otherEye], state.quote.uso, pairMinRank).allowed;
+            var sameOk = Q.checkProductForEye(prod, eff[otherEye], item.uso, pairMinRank).allowed;
             var match = sameOk ? prod : state.catalog.find(function (p) {
-              return p.tipo === prod.tipo && Q.checkProductForEye(p, eff[otherEye], state.quote.uso, pairMinRank).allowed;
+              return p.tipo === prod.tipo && Q.checkProductForEye(p, eff[otherEye], item.uso, pairMinRank).allowed;
             });
             if (match) {
               otherSel.mode = 'catalog';
@@ -950,21 +1101,23 @@
     saveDraft();
   }
 
-  function readManualAndPrice(eye) {
-    var sel = state.quote[eye];
-    sel.manual.nombre = $('#q-man-nombre-' + eye).value;
-    sel.manual.tipo = $('#q-man-tipo-' + eye).value;
-    sel.manual.diseno = $('#q-man-diseno-' + eye).value;
-    sel.manual.indice = $('#q-man-indice-' + eye).value;
-    sel.manual.tratamiento = $('#q-man-trat-' + eye).value;
-    sel.manual.saveToCatalog = $('#q-man-save-' + eye).checked;
-    sel.price = Math.max(0, Number($('#q-price-' + eye).value) || 0);
-    if (state.quote.eyesMode === 'both' && sel.mode === 'manual') {
+  function readManualAndPrice(block, itemIdx, eye) {
+    var item = state.quote.items[itemIdx];
+    var sel = item[eye];
+    var card = block.querySelector('[data-eye="' + eye + '"]');
+    sel.manual.nombre = card.querySelector('[data-role="man-nombre"]').value;
+    sel.manual.tipo = card.querySelector('[data-role="man-tipo"]').value;
+    sel.manual.diseno = card.querySelector('[data-role="man-diseno"]').value;
+    sel.manual.indice = card.querySelector('[data-role="man-indice"]').value;
+    sel.manual.tratamiento = card.querySelector('[data-role="man-trat"]').value;
+    sel.manual.saveToCatalog = card.querySelector('[data-role="man-save"]').checked;
+    sel.price = Math.max(0, Number(card.querySelector('[data-role="price"]').value) || 0);
+    if (item.eyesMode === 'both' && sel.mode === 'manual') {
       var otherEye = eye === 'od' ? 'oi' : 'od';
-      var otherProd = Q.resolveEyeProduct(state.quote[otherEye], state.catalog);
-      if (state.quote[otherEye].mode === 'manual' && otherProd && otherProd.tipo !== sel.manual.tipo) {
-        state.quote[otherEye].manual.tipo = sel.manual.tipo;
-        $('#q-man-tipo-' + otherEye).value = sel.manual.tipo;
+      var otherProd = Q.resolveEyeProduct(item[otherEye], state.catalog);
+      if (item[otherEye].mode === 'manual' && otherProd && otherProd.tipo !== sel.manual.tipo) {
+        item[otherEye].manual.tipo = sel.manual.tipo;
+        block.querySelector('[data-eye="' + otherEye + '"] [data-role="man-tipo"]').value = sel.manual.tipo;
       }
     }
     saveDraft();
@@ -985,15 +1138,39 @@
     return prod.nombre + ' [' + prod.tipo + (prod.indice ? ' · ' + prod.indice : '') + (prod.tratamiento ? ' · ' + prod.tratamiento : '') + ']';
   }
 
+  function optionToQuoteInput(item, q) {
+    return {
+      uso: item.uso,
+      eyesMode: item.eyesMode,
+      od: item.od,
+      oi: item.oi,
+      frame: q.frame,
+      discount: q.discount,
+      deposit: q.deposit
+    };
+  }
+
   function buildQuoteSnapshot() {
     var rx = collectRx();
     var extra = getExtraMap();
     var q = state.quote;
-    var eff = Q.resolveEffectiveRx(rx, q.uso);
-    var validation = Q.validateQuote(rx, q, state.catalog);
-    var totals = Q.calculateTotals(q, state.paymentConfig || C.PAYMENT_CONFIG);
-    var prodOd = q.eyesMode !== 'oi' ? Q.resolveEyeProduct(q.od, state.catalog) : null;
-    var prodOi = q.eyesMode !== 'od' ? Q.resolveEyeProduct(q.oi, state.catalog) : null;
+    var multi = q.items.length > 1;
+    var allErrors = [];
+    var allWarnings = [];
+    var payCfg = state.paymentConfig || C.PAYMENT_CONFIG;
+
+    var optionSnapshots = q.items.map(function (item, idx) {
+      var singleQ = optionToQuoteInput(item, q);
+      var eff = Q.resolveEffectiveRx(rx, item.uso);
+      var validation = Q.validateQuote(rx, singleQ, state.catalog);
+      var totals = Q.calculateTotals(singleQ, payCfg);
+      var prodOd = item.eyesMode !== 'oi' ? Q.resolveEyeProduct(item.od, state.catalog) : null;
+      var prodOi = item.eyesMode !== 'od' ? Q.resolveEyeProduct(item.oi, state.catalog) : null;
+      var prefix = multi ? ('Opción ' + (idx + 1) + ': ') : '';
+      validation.errors.forEach(function (msg) { allErrors.push(prefix + msg); });
+      validation.warnings.forEach(function (msg) { allWarnings.push(prefix + msg); });
+      return { item: item, eff: eff, validation: validation, totals: totals, prodOd: prodOd, prodOi: prodOi };
+    });
 
     var now = new Date();
     var validUntil = new Date(now.getTime() + (C.QUOTE_VALIDITY_DAYS || 7) * 86400000);
@@ -1001,10 +1178,30 @@
       return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
     };
     return {
-      rx: rx, extra: extra, eff: eff, validation: validation, totals: totals,
-      prodOd: prodOd, prodOi: prodOi,
+      rx: rx, extra: extra, optionSnapshots: optionSnapshots,
+      validation: { errors: allErrors, warnings: allWarnings },
       fechaStr: fmtDate(now), validaStr: fmtDate(validUntil)
     };
+  }
+
+  function buildOptionLines(opt, q) {
+    var it = opt.item;
+    var t = opt.totals;
+    var lines = [];
+    if (it.eyesMode !== 'oi') lines.push(['½ Par OD: ' + describeEyeItem(opt.prodOd), Q.fmtMoney(t.odPrice), false]);
+    if (it.eyesMode !== 'od') lines.push(['½ Par OI: ' + describeEyeItem(opt.prodOi), Q.fmtMoney(t.oiPrice), false]);
+    if (q.frame.mode !== 'none') {
+      lines.push(['Armazón: ' + frameSummaryText(), q.frame.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice), false]);
+    }
+    if (t.discountAmount > 0) {
+      lines.push(['Descuento / Obra Social' + (q.discountNote ? ' (' + q.discountNote + ')' : ''), '- ' + Q.fmtMoney(t.discountAmount), false]);
+    }
+    lines.push(['Total de lista', Q.fmtMoney(t.listTotal), true]);
+    if (t.depositAmount > 0) {
+      lines.push(['Seña', '- ' + Q.fmtMoney(t.depositAmount), false]);
+      lines.push(['Saldo a financiar / abonar', Q.fmtMoney(t.balanceBase), true]);
+    }
+    return lines;
   }
 
   function refreshQuotePreview() {
@@ -1025,50 +1222,57 @@
     });
 
     var q = state.quote;
-    var t = snap.totals;
     var usoLabels = { lejos: 'Lejos', cerca: 'Cerca', multifocal: 'Multifocal', bifocal: 'Bifocal', ocupacional: 'Ocupacional' };
-    var usoLabel = usoLabels[q.uso] || q.uso;
+    var eyesLabels = { both: 'Ambos ojos (OD + OI)', od: 'Solo OD', oi: 'Solo OI' };
+    var multi = snap.optionSnapshots.length > 1;
 
-    var itemRows = '';
-    if (q.eyesMode !== 'oi') {
-      itemRows += '<tr><td class="left"><b>½ Par OD:</b> ' + esc(describeEyeItem(snap.prodOd)) + '</td><td class="right">' + esc(Q.fmtMoney(t.odPrice)) + '</td></tr>';
-    }
-    if (q.eyesMode !== 'od') {
-      itemRows += '<tr><td class="left"><b>½ Par OI:</b> ' + esc(describeEyeItem(snap.prodOi)) + '</td><td class="right">' + esc(Q.fmtMoney(t.oiPrice)) + '</td></tr>';
-    }
-    if (q.frame.mode !== 'none') {
-      itemRows += '<tr><td class="left"><b>Armazón:</b> ' + esc(frameSummaryText()) + '</td><td class="right">' +
-        esc(q.frame.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice)) + '</td></tr>';
-    }
-    if (t.discountAmount > 0) {
-      var dNote = q.discountNote ? ' (' + q.discountNote + ')' : '';
-      itemRows += '<tr><td class="left">Descuento / Obra Social' + esc(dNote) + '</td><td class="right">- ' + esc(Q.fmtMoney(t.discountAmount)) + '</td></tr>';
-    }
-    itemRows += '<tr><td class="left"><b>Total de lista</b></td><td class="right"><b>' + esc(Q.fmtMoney(t.listTotal)) + '</b></td></tr>';
-    if (t.depositAmount > 0) {
-      itemRows += '<tr><td class="left">Seña</td><td class="right">- ' + esc(Q.fmtMoney(t.depositAmount)) + '</td></tr>';
-      itemRows += '<tr><td class="left"><b>Saldo a financiar / abonar</b></td><td class="right"><b>' + esc(Q.fmtMoney(t.balanceBase)) + '</b></td></tr>';
-    }
+    var optionsHtml = snap.optionSnapshots.map(function (opt, idx) {
+      var it = opt.item;
+      var t = opt.totals;
+      var usoLabel = usoLabels[it.uso] || it.uso;
 
-    var maxPriceNote = (q.eyesMode === 'both' && t.rawOdPrice !== t.rawOiPrice && t.odPrice > 0)
-      ? '<p class="qs-note">Graduación más alta define el valor aplicado a ambos cristales (' + esc(Q.fmtMoney(t.odPrice)) + ' c/u).</p>'
-      : '';
+      var itemRows = buildOptionLines(opt, q).map(function (ln) {
+        var left = ln[2] ? '<b>' + esc(ln[0]) + '</b>' : esc(ln[0]);
+        var right = ln[2] ? '<b>' + esc(ln[1]) + '</b>' : esc(ln[1]);
+        return '<tr><td class="left">' + left + '</td><td class="right">' + right + '</td></tr>';
+      }).join('');
 
-    var cardRowsHtml = getCardGroups(t).map(function (g) {
-      var optText = g.options.map(function (c) { return formatCardOption(c, true); }).join(' · ');
-      return '<div class="qs-pay-row"><span>Tarjeta · ' + esc(g.marca) + '</span>' +
-        '<span class="qs-pay-sub" style="text-align:right;color:var(--text)">' + esc(optText) + '</span></div>';
-    }).join('');
+      var maxPriceNote = (it.eyesMode === 'both' && t.rawOdPrice !== t.rawOiPrice && t.odPrice > 0)
+        ? '<p class="qs-note">Graduación más alta define el valor aplicado a ambos cristales (' + esc(Q.fmtMoney(t.odPrice)) + ' c/u).</p>'
+        : '';
 
-    var cristalinoHtml = t.cristalinoOptions.map(function (p) {
-      return '<div class="qs-pay-row"><span>Plan Cristalino ' + p.cuotas + ' cuotas (' + p.surchargePct + '% rec.)</span>' +
-        '<span><b>' + esc(Q.fmtMoney(p.cuotaMensual)) + '/mes</b><div class="qs-pay-sub">Total financiado: ' + esc(Q.fmtMoney(p.total)) + '</div></span></div>';
+      var cardRowsHtml = getCardGroups(t).map(function (g) {
+        var optText = g.options.map(function (c) { return formatCardOption(c, true); }).join(' · ');
+        return '<div class="qs-pay-row"><span>Tarjeta · ' + esc(g.marca) + '</span>' +
+          '<span class="qs-pay-sub" style="text-align:right;color:var(--text)">' + esc(optText) + '</span></div>';
+      }).join('');
+
+      var cristalinoHtml = t.cristalinoOptions.map(function (p) {
+        return '<div class="qs-pay-row"><span>Plan Cristalino ' + p.cuotas + ' cuotas (' + p.surchargePct + '% rec.)</span>' +
+          '<span><b>' + esc(Q.fmtMoney(p.cuotaMensual)) + '/mes</b><div class="qs-pay-sub">Total financiado: ' + esc(Q.fmtMoney(p.total)) + '</div></span></div>';
+      }).join('');
+
+      var titleHtml = multi
+        ? '<div class="qs-option-title"><span>Opción ' + (idx + 1) + ' · Uso: ' + esc(usoLabel) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>'
+        : '<div class="qs-option-title"><span>Uso: ' + esc(usoLabel) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>';
+
+      return '<div class="qs-option-block">' +
+        titleHtml +
+        '<table class="qs-table"><thead><tr><th class="left">Detalle (cotización por ½ par)</th><th class="right">Importe</th></tr></thead>' +
+        '<tbody>' + itemRows + '</tbody></table>' +
+        maxPriceNote +
+        '<div class="qs-pay"><h4>Medios de pago' + (t.depositAmount > 0 ? ' (sobre saldo)' : '') + '</h4>' +
+        '<div class="qs-pay-row highlight"><span>Efectivo (' + t.cashDiscountPct + '% desc.)</span><span>' + esc(Q.fmtMoney(t.cashTotal)) + '</span></div>' +
+        '<div class="qs-pay-row"><span>Transferencia bancaria</span><span>' + esc(Q.fmtMoney(t.transferTotal)) + '</span></div>' +
+        cardRowsHtml +
+        cristalinoHtml +
+        '</div></div>';
     }).join('');
 
     // Sin tabla de graduación para el cliente (regla #3: oculta al imprimir/enviar, guardada en Sheets).
     $('#quote-sheet').innerHTML =
       '<div class="qs-head"><div><div class="qs-title">' + esc(C.OPTICA_NAME || 'Óptica') + '</div>' +
-      '<div class="qs-sub">Presupuesto · Uso: ' + esc(usoLabel) + '</div></div>' +
+      '<div class="qs-sub">Presupuesto' + (multi ? (' (' + snap.optionSnapshots.length + ' opciones)') : '') + '</div></div>' +
       '<div class="qs-sub">Fecha: ' + esc(snap.fechaStr) + '<br>Válido hasta: ' + esc(snap.validaStr) + '</div></div>' +
       '<div class="qs-meta">' +
       '<div><b>Cliente:</b> ' + esc(snap.extra.nombre || snap.rx.paciente || '—') + '</div>' +
@@ -1076,16 +1280,8 @@
       '<div><b>Médico:</b> ' + esc([snap.rx.medico, snap.rx.matricula].filter(Boolean).join(' · ') || '—') + '</div>' +
       '<div><b>Vendedor:</b> ' + esc(snap.extra.vendedor || '—') + '</div>' +
       '</div>' +
-      '<table class="qs-table"><thead><tr><th class="left">Detalle (cotización por ½ par)</th><th class="right">Importe</th></tr></thead>' +
-      '<tbody>' + itemRows + '</tbody></table>' +
-      maxPriceNote +
-      '<div class="qs-pay"><h4>Medios de pago' + (t.depositAmount > 0 ? ' (sobre saldo)' : '') + '</h4>' +
-      '<div class="qs-pay-row highlight"><span>Efectivo (' + t.cashDiscountPct + '% desc.)</span><span>' + esc(Q.fmtMoney(t.cashTotal)) + '</span></div>' +
-      '<div class="qs-pay-row"><span>Transferencia bancaria</span><span>' + esc(Q.fmtMoney(t.transferTotal)) + '</span></div>' +
-      cardRowsHtml +
-      cristalinoHtml +
-      '</div>' +
-      '<p class="qs-note" style="margin:.65rem 0 0">Sujeto a verificación técnica en óptica. Precios válidos hasta el ' + esc(snap.validaStr) + '.</p>';
+      optionsHtml +
+      '<p class="qs-note" style="margin:.25rem 0 0">Sujeto a verificación técnica en óptica. Precios válidos hasta el ' + esc(snap.validaStr) + '.</p>';
   }
 
   function getCardGroups(t) {
@@ -1105,25 +1301,29 @@
   function generateQuotePngBlob() {
     var snap = buildQuoteSnapshot();
     var q = state.quote;
-    var t = snap.totals;
     var W = 900;
     var pad = 42;
     var usoLabels = { lejos: 'Lejos', cerca: 'Cerca', multifocal: 'Multifocal', bifocal: 'Bifocal', ocupacional: 'Ocupacional' };
+    var multi = snap.optionSnapshots.length > 1;
 
-    var lines = [];
-    if (q.eyesMode !== 'oi') lines.push(['½ Par OD: ' + describeEyeItem(snap.prodOd), Q.fmtMoney(t.odPrice)]);
-    if (q.eyesMode !== 'od') lines.push(['½ Par OI: ' + describeEyeItem(snap.prodOi), Q.fmtMoney(t.oiPrice)]);
-    if (q.frame.mode !== 'none') lines.push(['Armazón: ' + frameSummaryText(), q.frame.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice)]);
-    if (t.discountAmount > 0) lines.push(['Descuento / OS' + (q.discountNote ? ' (' + q.discountNote + ')' : ''), '- ' + Q.fmtMoney(t.discountAmount)]);
-    lines.push(['Total de lista', Q.fmtMoney(t.listTotal), true]);
-    if (t.depositAmount > 0) {
-      lines.push(['Seña', '- ' + Q.fmtMoney(t.depositAmount)]);
-      lines.push(['Saldo a abonar', Q.fmtMoney(t.balanceBase), true]);
-    }
+    var blocks = snap.optionSnapshots.map(function (opt, idx) {
+      var t = opt.totals;
+      var lines = buildOptionLines(opt, q);
+      var cardGroups = getCardGroups(t);
+      var headerH = multi ? 30 : 0;
+      var linesH = lines.length * 36;
+      var payH = 98 + cardGroups.length * 26 + t.cristalinoOptions.length * 32;
+      var totalH = headerH + linesH + 6 + payH + 26;
+      return {
+        idx: idx, opt: opt, t: t, lines: lines, cardGroups: cardGroups,
+        headerH: headerH, payH: payH, totalH: totalH,
+        usoLabel: usoLabels[opt.item.uso] || opt.item.uso
+      };
+    });
 
-    var cardGroups = getCardGroups(t);
-    var extraCardRows = Math.max(0, cardGroups.length - 1);
-    var H = 430 + lines.length * 38 + extraCardRows * 30 + t.cristalinoOptions.length * 42;
+    var startY = 188;
+    var bodyH = blocks.reduce(function (acc, b) { return acc + b.totalH; }, 0);
+    var H = startY + bodyH + 26;
     var canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
@@ -1138,79 +1338,94 @@
     ctx.font = 'bold 28px system-ui, sans-serif';
     ctx.fillText(C.OPTICA_NAME || 'Óptica Cristalino', pad, 44);
     ctx.font = '16px system-ui, sans-serif';
-    ctx.fillText('Presupuesto Óptico · Uso: ' + (usoLabels[q.uso] || q.uso), pad, 72);
+    var subHdr = multi
+      ? ('Presupuesto Óptico · ' + blocks.length + ' opciones independientes')
+      : ('Presupuesto Óptico · Uso: ' + blocks[0].usoLabel);
+    ctx.fillText(subHdr, pad, 72);
     ctx.textAlign = 'right';
     ctx.fillText('Fecha: ' + snap.fechaStr, W - pad, 42);
     ctx.fillText('Válido hasta: ' + snap.validaStr, W - pad, 68);
     ctx.textAlign = 'left';
 
-    var y = 128;
     ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 17px system-ui, sans-serif';
-    ctx.fillText('Cliente: ' + (snap.extra.nombre || snap.rx.paciente || '—'), pad, y);
+    ctx.fillText('Cliente: ' + (snap.extra.nombre || snap.rx.paciente || '—'), pad, 126);
     ctx.font = '16px system-ui, sans-serif';
-    ctx.fillText('Vendedor: ' + (snap.extra.vendedor || '—') + '   ·   Médico: ' + ([snap.rx.medico, snap.rx.matricula].filter(Boolean).join(' ') || '—'), pad, y + 26);
+    ctx.fillText('Vendedor: ' + (snap.extra.vendedor || '—') + '   ·   Médico: ' + ([snap.rx.medico, snap.rx.matricula].filter(Boolean).join(' ') || '—'), pad, 152);
 
-    y += 66;
-    lines.forEach(function (ln) {
-      ctx.font = ln[2] ? 'bold 18px system-ui, sans-serif' : '16px system-ui, sans-serif';
-      ctx.fillStyle = '#0f172a';
-      ctx.textAlign = 'left';
-      var label = ln[0].length > 62 ? ln[0].slice(0, 61) + '…' : ln[0];
-      ctx.fillText(label, pad, y);
-      ctx.textAlign = 'right';
-      ctx.fillText(ln[1], W - pad, y);
-      y += 12;
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke();
-      y += 26;
-    });
+    var y = startY;
+    blocks.forEach(function (blk) {
+      var t = blk.t;
+      if (blk.headerH > 0) {
+        ctx.fillStyle = '#ccfbf1';
+        ctx.fillRect(pad, y - 16, W - pad * 2, 24);
+        ctx.fillStyle = '#115e59';
+        ctx.font = 'bold 15px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('OPCIÓN ' + (blk.idx + 1) + '  ·  USO: ' + blk.usoLabel.toUpperCase(), pad + 10, y + 1);
+        y += blk.headerH;
+      }
 
-    y += 8;
-    ctx.fillStyle = '#f8fafc';
-    var payH = 126 + extraCardRows * 28 + t.cristalinoOptions.length * 40;
-    ctx.fillRect(pad, y, W - pad * 2, payH);
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.strokeRect(pad, y, W - pad * 2, payH);
+      blk.lines.forEach(function (ln) {
+        ctx.font = ln[2] ? 'bold 17px system-ui, sans-serif' : '15px system-ui, sans-serif';
+        ctx.fillStyle = '#0f172a';
+        ctx.textAlign = 'left';
+        var label = ln[0].length > 62 ? ln[0].slice(0, 61) + '…' : ln[0];
+        ctx.fillText(label, pad, y);
+        ctx.textAlign = 'right';
+        ctx.fillText(ln[1], W - pad, y);
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.beginPath(); ctx.moveTo(pad, y + 11); ctx.lineTo(W - pad, y + 11); ctx.stroke();
+        y += 36;
+      });
 
-    var py = y + 30;
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#115e59';
-    ctx.font = 'bold 17px system-ui, sans-serif';
-    ctx.fillText('MEDIOS DE PAGO' + (t.depositAmount > 0 ? ' (SOBRE SALDO)' : ''), pad + 16, py);
-    py += 30;
-    ctx.font = 'bold 18px system-ui, sans-serif';
-    ctx.fillText('Efectivo (' + t.cashDiscountPct + '% descuento):', pad + 16, py);
-    ctx.textAlign = 'right';
-    ctx.fillText(Q.fmtMoney(t.cashTotal), W - pad - 16, py);
-    py += 28;
-    ctx.fillStyle = '#0f172a';
-    ctx.font = '16px system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText('Transferencia bancaria:', pad + 16, py);
-    ctx.textAlign = 'right';
-    ctx.fillText(Q.fmtMoney(t.transferTotal), W - pad - 16, py);
-    cardGroups.forEach(function (g) {
-      py += 28;
+      y += 6;
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(pad, y, W - pad * 2, blk.payH);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.strokeRect(pad, y, W - pad * 2, blk.payH);
+
+      var py = y + 26;
       ctx.textAlign = 'left';
-      var cardsStr = g.options.map(function (c) { return formatCardOption(c, false); }).join('  ·  ');
-      var cardLine = 'Tarjeta ' + g.marca + ': ' + cardsStr;
-      if (cardLine.length > 88) cardLine = cardLine.slice(0, 87) + '…';
-      ctx.fillText(cardLine, pad + 16, py);
-    });
-    t.cristalinoOptions.forEach(function (p) {
-      py += 34;
-      ctx.textAlign = 'left';
+      ctx.fillStyle = '#115e59';
       ctx.font = 'bold 16px system-ui, sans-serif';
-      ctx.fillText('Plan Cristalino ' + p.cuotas + ' cuotas (' + p.surchargePct + '% rec.):', pad + 16, py);
+      ctx.fillText('MEDIOS DE PAGO' + (t.depositAmount > 0 ? ' (SOBRE SALDO)' : ''), pad + 16, py);
+      py += 28;
+      ctx.font = 'bold 17px system-ui, sans-serif';
+      ctx.fillText('Efectivo (' + t.cashDiscountPct + '% descuento):', pad + 16, py);
       ctx.textAlign = 'right';
-      ctx.fillText(Q.fmtMoney(p.cuotaMensual) + '/mes  (Total: ' + Q.fmtMoney(p.total) + ')', W - pad - 16, py);
+      ctx.fillText(Q.fmtMoney(t.cashTotal), W - pad - 16, py);
+      py += 26;
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '15px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('Transferencia bancaria:', pad + 16, py);
+      ctx.textAlign = 'right';
+      ctx.fillText(Q.fmtMoney(t.transferTotal), W - pad - 16, py);
+      blk.cardGroups.forEach(function (g) {
+        py += 26;
+        ctx.textAlign = 'left';
+        var cardsStr = g.options.map(function (c) { return formatCardOption(c, false); }).join('  ·  ');
+        var cardLine = 'Tarjeta ' + g.marca + ': ' + cardsStr;
+        if (cardLine.length > 88) cardLine = cardLine.slice(0, 87) + '…';
+        ctx.fillText(cardLine, pad + 16, py);
+      });
+      t.cristalinoOptions.forEach(function (p) {
+        py += 32;
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 15px system-ui, sans-serif';
+        ctx.fillText('Plan Cristalino ' + p.cuotas + ' cuotas (' + p.surchargePct + '% rec.):', pad + 16, py);
+        ctx.textAlign = 'right';
+        ctx.fillText(Q.fmtMoney(p.cuotaMensual) + '/mes  (Total: ' + Q.fmtMoney(p.total) + ')', W - pad - 16, py);
+      });
+
+      y += blk.payH + 26;
     });
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#64748b';
     ctx.font = '13px system-ui, sans-serif';
-    ctx.fillText('Presupuesto válido hasta ' + snap.validaStr + '. Sujeto a verificación técnica en óptica.', pad, H - 20);
+    ctx.fillText('Presupuesto válido hasta ' + snap.validaStr + '. Sujeto a verificación técnica en óptica.', pad, H - 16);
 
     return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
   }
@@ -1247,33 +1462,56 @@
     var extraFields = collectExtraFields();
     var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
     var q = state.quote;
-    var t = snap.totals;
 
     var newCatalogItems = [];
     var seenManual = {};
-    ['od', 'oi'].forEach(function (eye) {
-      if ((eye === 'od' && q.eyesMode === 'oi') || (eye === 'oi' && q.eyesMode === 'od')) return;
-      var sel = q[eye];
-      if (sel.mode === 'manual' && sel.manual.saveToCatalog) {
-        var prod = Q.resolveEyeProduct(sel, state.catalog);
-        var dedupKey = [prod.nombre, prod.tipo, prod.diseno, prod.indice, prod.tratamiento, prod.precioMedioPar].join('|');
-        if (!seenManual[dedupKey]) {
-          seenManual[dedupKey] = true;
-          newCatalogItems.push({
-            nombre: prod.nombre,
-            tipo: prod.tipo,
-            diseno: prod.diseno,
-            indice: prod.indice,
-            tratamiento: prod.tratamiento,
-            precioMedioPar: prod.precioMedioPar
-          });
+    q.items.forEach(function (it) {
+      ['od', 'oi'].forEach(function (eye) {
+        if ((eye === 'od' && it.eyesMode === 'oi') || (eye === 'oi' && it.eyesMode === 'od')) return;
+        var sel = it[eye];
+        if (sel.mode === 'manual' && sel.manual.saveToCatalog) {
+          var prod = Q.resolveEyeProduct(sel, state.catalog);
+          var dedupKey = [prod.nombre, prod.tipo, prod.diseno, prod.indice, prod.tratamiento, prod.precioMedioPar].join('|');
+          if (!seenManual[dedupKey]) {
+            seenManual[dedupKey] = true;
+            newCatalogItems.push({
+              nombre: prod.nombre,
+              tipo: prod.tipo,
+              diseno: prod.diseno,
+              indice: prod.indice,
+              tratamiento: prod.tratamiento,
+              precioMedioPar: prod.precioMedioPar
+            });
+          }
         }
-      }
+      });
     });
 
-    var cristalinoTxt = t.cristalinoOptions.map(function (p) {
-      return p.cuotas + '×' + Q.fmtMoney(p.cuotaMensual) + ' (' + Q.fmtMoney(p.total) + ')';
-    }).join(' | ');
+    var quoteItems = snap.optionSnapshots.map(function (opt, idx) {
+      var it = opt.item;
+      var t = opt.totals;
+      var cristalinoTxt = t.cristalinoOptions.map(function (p) {
+        return p.cuotas + '×' + Q.fmtMoney(p.cuotaMensual) + ' (' + Q.fmtMoney(p.total) + ')';
+      }).join(' | ');
+      return {
+        opcion: idx + 1,
+        uso: it.uso,
+        eyesMode: it.eyesMode,
+        odNombre: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.nombre : ''),
+        odTipo: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.tipo : ''),
+        odPrecio: it.eyesMode === 'oi' ? '' : String(t.odPrice),
+        oiNombre: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.nombre : ''),
+        oiTipo: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.tipo : ''),
+        oiPrecio: it.eyesMode === 'od' ? '' : String(t.oiPrice),
+        armazon: q.frame.mode === 'none' ? '' : frameSummaryText(),
+        armazonPrecio: String(t.framePrice),
+        descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
+        sena: String(t.depositAmount),
+        totalLista: String(t.listTotal),
+        totalEfectivo: String(t.cashTotal),
+        planCristalino: cristalinoTxt
+      };
+    });
 
     return {
       newCatalogItems: newCatalogItems,
@@ -1288,23 +1526,9 @@
         extraFields: extraFields,
         isRx: !(state.ocr.rx && state.ocr.rx.es_receta_optica === false),
         corrected: wasCorrected(snap.rx),
-        quoteSummary: {
-          uso: q.uso,
-          eyesMode: q.eyesMode,
-          odNombre: q.eyesMode === 'oi' ? '' : (snap.prodOd ? snap.prodOd.nombre : ''),
-          odTipo: q.eyesMode === 'oi' ? '' : (snap.prodOd ? snap.prodOd.tipo : ''),
-          odPrecio: q.eyesMode === 'oi' ? '' : String(t.odPrice),
-          oiNombre: q.eyesMode === 'od' ? '' : (snap.prodOi ? snap.prodOi.nombre : ''),
-          oiTipo: q.eyesMode === 'od' ? '' : (snap.prodOi ? snap.prodOi.tipo : ''),
-          oiPrecio: q.eyesMode === 'od' ? '' : String(t.oiPrice),
-          armazon: q.frame.mode === 'none' ? '' : frameSummaryText(),
-          armazonPrecio: String(t.framePrice),
-          descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
-          sena: String(t.depositAmount),
-          totalLista: String(t.listTotal),
-          totalEfectivo: String(t.cashTotal),
-          planCristalino: cristalinoTxt
-        },
+        newCatalogItems: newCatalogItems,
+        quoteItems: quoteItems,
+        quoteSummary: quoteItems[0],
         timings: buildTimingsPayload()
       }
     };
@@ -1379,7 +1603,8 @@
   function showDone(res) {
     res = res || {};
     var parts = [];
-    if (res.fila) parts.push('Fila ' + res.fila + ' del Sheet.');
+    if (Array.isArray(res.filas) && res.filas.length > 1) parts.push('Filas ' + res.filas.join(', ') + ' del Sheet.');
+    else if (res.fila) parts.push('Fila ' + res.fila + ' del Sheet.');
     if (res.fotoNombre) parts.push('Foto: ' + res.fotoNombre);
     if (res.demo) parts.push('(Demo: no se guardó nada)');
     $('#done-detail').textContent = parts.join(' ');
@@ -1563,40 +1788,13 @@
     });
     $('#close-form').addEventListener('submit', submitClose);
 
-    $('#q-uso').addEventListener('change', function () {
-      state.quote.uso = $('#q-uso').value;
-      var dis = Q.USO_TO_DISENO[state.quote.uso] || 'Monofocal';
-      state.quote.od.manual.diseno = dis;
-      state.quote.oi.manual.diseno = dis;
-      if (dis !== 'Monofocal') {
-        state.quote.od.manual.tipo = 'Laboratorio';
-        state.quote.oi.manual.tipo = 'Laboratorio';
-      }
+    $('#btn-add-quote-item').addEventListener('click', function () {
+      var rx = collectRx();
+      state.quote.items.push(defaultQuoteItem(Q.inferDefaultUso(rx)));
       syncQuoteControls();
       saveDraft();
-    });
-    $('#q-eyes').addEventListener('change', function () {
-      state.quote.eyesMode = $('#q-eyes').value;
-      syncQuoteControls();
-      saveDraft();
-    });
-    ['od', 'oi'].forEach(function (eye) {
-      $('#q-prod-' + eye).addEventListener('change', function () { onEyeSelectChange(eye); });
-      ['nombre', 'tipo', 'diseno', 'indice', 'trat'].forEach(function (fld) {
-        var el = $('#q-man-' + fld + '-' + eye);
-        el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', function () {
-          readManualAndPrice(eye);
-          refreshQuotePreview();
-        });
-      });
-      $('#q-man-save-' + eye).addEventListener('change', function () {
-        readManualAndPrice(eye);
-        refreshQuotePreview();
-      });
-      $('#q-price-' + eye).addEventListener('input', function () {
-        readManualAndPrice(eye);
-        refreshQuotePreview();
-      });
+      var blocks = $('#q-items-list').querySelectorAll('.quote-item-block');
+      if (blocks.length) blocks[blocks.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
 
     $('#q-frame-mode').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); saveDraft(); });

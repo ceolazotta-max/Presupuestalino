@@ -120,79 +120,9 @@
       <div class="quote-layout">
         <div class="card">
           <h2>Presupuestador de anteojos</h2>
-          <div class="rx-list">
-            <label class="field">
-              <span>Uso del anteojo</span>
-              <select id="q-uso">
-                <option value="lejos">Lejos</option>
-                <option value="cerca">Cerca</option>
-                <option value="multifocal">Multifocal</option>
-                <option value="bifocal">Bifocal</option>
-                <option value="ocupacional">Ocupacional</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Ojos a cotizar</span>
-              <select id="q-eyes">
-                <option value="both">Ambos ojos (OD + OI)</option>
-                <option value="od">Solo OD (½ par derecho)</option>
-                <option value="oi">Solo OI (½ par izquierdo)</option>
-              </select>
-            </label>
-          </div>
-
-          <div id="q-eyes-grid" class="eyes-grid">
-            <div id="q-card-od" class="eye-card">
-              <div class="eye-head">
-                <h3>½ Par OD (Ojo Derecho)</h3>
-                <span id="q-badge-od" class="badge"></span>
-              </div>
-              <p id="q-rx-od" class="rx-summary"></p>
-              <label class="field">
-                <span>Cristal OD</span>
-                <select id="q-prod-od"></select>
-              </label>
-              <div id="q-manual-od" class="manual-box" hidden>
-                <label class="field"><span>Nombre / Descripción *</span><input id="q-man-nombre-od" type="text" maxlength="120" placeholder="Ej. Orgánico 1.60 Blue Cut"></label>
-                <div class="rx-list">
-                  <label class="field"><span>Tipo</span><select id="q-man-tipo-od"><option value="Stock">Stock</option><option value="Rango Extendido">Rango Extendido</option><option value="Laboratorio">Laboratorio</option></select></label>
-                  <label class="field"><span>Diseño</span><select id="q-man-diseno-od"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>
-                  <label class="field"><span>Índice</span><select id="q-man-indice-od"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>
-                  <label class="field"><span>Tratamiento</span><input id="q-man-trat-od" type="text" maxlength="40" placeholder="Blanco / AR / Blue Cut / Foto"></label>
-                </div>
-                <label class="check-field"><input id="q-man-save-od" type="checkbox"> <span>Guardar este cristal en el Catálogo para próximas veces</span></label>
-              </div>
-              <label class="field">
-                <span>Precio ½ par OD ($)</span>
-                <input id="q-price-od" type="number" min="0" step="100" inputmode="numeric">
-              </label>
-            </div>
-
-            <div id="q-card-oi" class="eye-card">
-              <div class="eye-head">
-                <h3>½ Par OI (Ojo Izquierdo)</h3>
-                <span id="q-badge-oi" class="badge"></span>
-              </div>
-              <p id="q-rx-oi" class="rx-summary"></p>
-              <label class="field">
-                <span>Cristal OI</span>
-                <select id="q-prod-oi"></select>
-              </label>
-              <div id="q-manual-oi" class="manual-box" hidden>
-                <label class="field"><span>Nombre / Descripción *</span><input id="q-man-nombre-oi" type="text" maxlength="120" placeholder="Ej. Tallado 1.67 Antirreflejo"></label>
-                <div class="rx-list">
-                  <label class="field"><span>Tipo</span><select id="q-man-tipo-oi"><option value="Stock">Stock</option><option value="Rango Extendido">Rango Extendido</option><option value="Laboratorio">Laboratorio</option></select></label>
-                  <label class="field"><span>Diseño</span><select id="q-man-diseno-oi"><option value="Monofocal">Monofocal</option><option value="Bifocal">Bifocal</option><option value="Multifocal">Multifocal</option><option value="Ocupacional">Ocupacional</option></select></label>
-                  <label class="field"><span>Índice</span><select id="q-man-indice-oi"><option value="1.50">1.50</option><option value="1.56">1.56</option><option value="1.59">1.59 Poly</option><option value="1.60">1.60</option><option value="1.67">1.67</option><option value="1.74">1.74</option></select></label>
-                  <label class="field"><span>Tratamiento</span><input id="q-man-trat-oi" type="text" maxlength="40" placeholder="Blanco / AR / Blue Cut / Foto"></label>
-                </div>
-                <label class="check-field"><input id="q-man-save-oi" type="checkbox"> <span>Guardar este cristal en el Catálogo para próximas veces</span></label>
-              </div>
-              <label class="field">
-                <span>Precio ½ par OI ($)</span>
-                <input id="q-price-oi" type="number" min="0" step="100" inputmode="numeric">
-              </label>
-            </div>
+          <div id="q-items-list" class="quote-items-list"></div>
+          <div class="quote-add-wrap">
+            <button id="btn-add-quote-item" class="btn ghost full" type="button">+ Agregar más productos</button>
           </div>
 
           <h3>Armazón, descuento y seña</h3>
