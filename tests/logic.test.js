@@ -396,3 +396,47 @@ test('Opciones múltiples independientes generan filas separadas con Opción # y
   assert.deepEqual(row1.row, ['u-multi', 'Gomez Ana', 1, 77000]);
   assert.deepEqual(row2.row, ['u-multi', 'Gomez Ana', 2, 67000]);
 });
+
+test('Logic.extractOcrJson ignora partes thought, limpia markdown y detecta truncado', () => {
+  // JSON limpio
+  const ok1 = L.extractOcrJson({
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"es_receta_optica":true,"campos":{}}' }] } }]
+  });
+  assert.equal(ok1.ok, true);
+  assert.equal(ok1.parsed.es_receta_optica, true);
+
+  // Parte thought en parts[0] + JSON en parts[1]
+  const ok2 = L.extractOcrJson({
+    candidates: [{
+      finishReason: 'STOP',
+      content: {
+        parts: [
+          { thought: true, text: 'Voy a analizar...' },
+          { text: '```json\n{"es_receta_optica":false,"campos":{}}\n```' }
+        ]
+      }
+    }]
+  });
+  assert.equal(ok2.ok, true);
+  assert.equal(ok2.parsed.es_receta_optica, false);
+
+  // JSON envuelto en texto extra
+  const ok3 = L.extractOcrJson({
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'Resultado:\n{"es_receta_optica":true,"campos":{"x":{"valor":"1"}}}\nFin' }] } }]
+  });
+  assert.equal(ok3.ok, true);
+  assert.equal(ok3.parsed.campos.x.valor, '1');
+
+  // Truncado por MAX_TOKENS -> reason: 'truncated'
+  const badTrunc = L.extractOcrJson({
+    candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"es_receta_optica":true,"campos":{"lejos_od' }] } }]
+  });
+  assert.equal(badTrunc.ok, false);
+  assert.equal(badTrunc.reason, 'truncated');
+
+  // Vacío o no-JSON -> ok: false
+  assert.equal(L.extractOcrJson({ candidates: [] }).ok, false);
+  assert.equal(L.extractOcrJson({
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'texto plano sin json' }] } }]
+  }).reason, 'invalid_json');
+});

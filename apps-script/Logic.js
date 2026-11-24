@@ -439,6 +439,53 @@ function normalizeOcrResult(rawObj, fields) {
   };
 }
 
+/** Extrae y parsea el JSON de la respuesta de Gemini ignorando bloques thought y fences Markdown. */
+function extractOcrJson(geminiData) {
+  var cand = geminiData && geminiData.candidates && geminiData.candidates[0];
+  var finishReason = String((cand && cand.finishReason) || '');
+  var parts = (cand && cand.content && Array.isArray(cand.content.parts)) ? cand.content.parts : [];
+  var nonThought = parts
+    .filter(function (p) { return p && !p.thought && typeof p.text === 'string'; })
+    .map(function (p) { return p.text; })
+    .join('\n')
+    .trim();
+  var text = nonThought || parts
+    .filter(function (p) { return p && typeof p.text === 'string'; })
+    .map(function (p) { return p.text; })
+    .join('\n')
+    .trim();
+  if (!text) {
+    return {
+      ok: false,
+      reason: finishReason === 'MAX_TOKENS' ? 'truncated' : 'empty',
+      finishReason: finishReason,
+      raw: ''
+    };
+  }
+  var cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  var parsed = null;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    var start = cleaned.indexOf('{');
+    var end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        parsed = JSON.parse(cleaned.slice(start, end + 1));
+      } catch (e2) { parsed = null; }
+    }
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return { ok: true, parsed: parsed, raw: text, finishReason: finishReason };
+  }
+  return {
+    ok: false,
+    reason: finishReason === 'MAX_TOKENS' ? 'truncated' : 'invalid_json',
+    finishReason: finishReason,
+    raw: text.slice(0, 300)
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRxFields: buildRxFields, buildRxSchema: buildRxSchema, normalizeName: normalizeName,
@@ -449,6 +496,7 @@ if (typeof module !== 'undefined' && module.exports) {
     CATALOG_HEADERS: CATALOG_HEADERS, SEED_CATALOG_ITEMS: SEED_CATALOG_ITEMS,
     parseCatalogRows: parseCatalogRows, sanitizeCatalogItem: sanitizeCatalogItem,
     catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult,
+    extractOcrJson: extractOcrJson,
     formatPersonName: formatPersonName, toSheetValue: toSheetValue,
     PAYMENT_HEADERS: PAYMENT_HEADERS, SEED_PAYMENT_ROWS: SEED_PAYMENT_ROWS,
     parsePaymentRows: parsePaymentRows
