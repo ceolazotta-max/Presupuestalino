@@ -440,3 +440,26 @@ test('Logic.extractOcrJson ignora partes thought, limpia markdown y detecta trun
     candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'texto plano sin json' }] } }]
   }).reason, 'invalid_json');
 });
+
+test('Logic.thinkingModesForModel y buildOcrGenerationConfig usan enums MAYÚSCULAS y orden correcto', () => {
+  assert.deepEqual(L.thinkingModesForModel('gemini-3.5-flash-lite', ''), ['minimal', 'low', 'budget0', 'none']);
+  assert.deepEqual(L.thinkingModesForModel('gemini-3.5-flash-lite', 'low'), ['low', 'minimal', 'budget0', 'none']);
+  assert.deepEqual(L.thinkingModesForModel('gemini-2.5-flash', ''), ['budget0', 'none']);
+  assert.deepEqual(L.thinkingModesForModel('gemini-3.5-flash', 'invalid_mode'), ['minimal', 'low', 'budget0', 'none']);
+
+  const minCfg = L.buildOcrGenerationConfig('minimal', 0);
+  assert.equal(minCfg.maxOutputTokens, 1400);
+  assert.deepEqual(minCfg.thinkingConfig, { thinkingLevel: 'MINIMAL' });
+
+  const lowCfg = L.buildOcrGenerationConfig('low', 0);
+  assert.equal(lowCfg.maxOutputTokens, 2048);
+  assert.deepEqual(lowCfg.thinkingConfig, { thinkingLevel: 'LOW' });
+
+  const b0Cfg = L.buildOcrGenerationConfig('budget0', 256);
+  assert.equal(b0Cfg.maxOutputTokens, 256);
+  assert.deepEqual(b0Cfg.thinkingConfig, { thinkingBudget: 0 });
+
+  const noneCfg = L.buildOcrGenerationConfig('none', 0);
+  assert.equal(noneCfg.maxOutputTokens, 1800);
+  assert.equal(noneCfg.thinkingConfig, undefined);
+});

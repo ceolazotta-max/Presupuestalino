@@ -486,6 +486,35 @@ function extractOcrJson(geminiData) {
   };
 }
 
+/** Orden de modos de thinking a intentar según familia de modelo Gemini. */
+function thinkingModesForModel(model, cachedMode) {
+  var base = /^gemini-2\.5-/i.test(String(model || ''))
+    ? ['budget0', 'none']
+    : ['minimal', 'low', 'budget0', 'none'];
+  if (cachedMode && base.indexOf(cachedMode) >= 0) {
+    return [cachedMode].concat(base.filter(function (m) { return m !== cachedMode; }));
+  }
+  return base;
+}
+
+/** Construye generationConfig REST v1beta (enums thinkingLevel en MAYÚSCULAS). */
+function buildOcrGenerationConfig(mode, maxTokensOverride) {
+  var table = {
+    minimal: { tokens: 1400, thinkingConfig: { thinkingLevel: 'MINIMAL' } },
+    low: { tokens: 2048, thinkingConfig: { thinkingLevel: 'LOW' } },
+    budget0: { tokens: 1400, thinkingConfig: { thinkingBudget: 0 } },
+    none: { tokens: 1800, thinkingConfig: null }
+  };
+  var spec = table[mode] || table.none;
+  var cfg = {
+    temperature: 0,
+    responseMimeType: 'application/json',
+    maxOutputTokens: maxTokensOverride || spec.tokens
+  };
+  if (spec.thinkingConfig) cfg.thinkingConfig = spec.thinkingConfig;
+  return cfg;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRxFields: buildRxFields, buildRxSchema: buildRxSchema, normalizeName: normalizeName,
@@ -496,7 +525,8 @@ if (typeof module !== 'undefined' && module.exports) {
     CATALOG_HEADERS: CATALOG_HEADERS, SEED_CATALOG_ITEMS: SEED_CATALOG_ITEMS,
     parseCatalogRows: parseCatalogRows, sanitizeCatalogItem: sanitizeCatalogItem,
     catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult,
-    extractOcrJson: extractOcrJson,
+    extractOcrJson: extractOcrJson, thinkingModesForModel: thinkingModesForModel,
+    buildOcrGenerationConfig: buildOcrGenerationConfig,
     formatPersonName: formatPersonName, toSheetValue: toSheetValue,
     PAYMENT_HEADERS: PAYMENT_HEADERS, SEED_PAYMENT_ROWS: SEED_PAYMENT_ROWS,
     parsePaymentRows: parsePaymentRows

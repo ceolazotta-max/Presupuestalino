@@ -187,50 +187,54 @@ function ocrModelCandidates_(c, cachedModel) {
   return [
     cachedModel,
     explicit,
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash',
     'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
     'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
     'gemini-3.8-flash',
     'gemini-flash-lite-latest',
     'gemini-flash-latest'
   ].filter(function (m, i, arr) { return m && arr.indexOf(m) === i; });
 }
 
-function buildOcrRequestPayload_(model, contents, maxTokens, includeThinking) {
-  var genCfg = {
-    temperature: 0,
-    responseMimeType: 'application/json',
-    maxOutputTokens: maxTokens || 4096
-  };
-  if (includeThinking !== false) {
-    if (/^gemini-2\.5-/i.test(model)) {
-      genCfg.thinkingConfig = { thinkingBudget: 0 };
-    } else if (/^gemini-3(\.\d+)?-/i.test(model)) {
-      genCfg.thinkingConfig = { thinkingLevel: 'minimal' };
-    }
-  }
-  return JSON.stringify({ contents: contents, generationConfig: genCfg });
-}
-
-function fetchGeminiModel_(model, contents, maxTokens, apiKey) {
+function fetchGeminiModel_(model, contents, maxTokensOverride, apiKey, cache) {
   var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
     encodeURIComponent(model) + ':generateContent';
-  var hasThinkingCfg = /^gemini-(?:2\.5|3(?:\.\d+)?)-/i.test(model);
-  var reqOpts = function (includeThinking) {
-    return {
-      method: 'post',
-      contentType: 'application/json',
-      muteHttpExceptions: true,
-      headers: { 'x-goog-api-key': apiKey },
-      payload: buildOcrRequestPayload_(model, contents, maxTokens, includeThinking)
-    };
-  };
-  var attempt = UrlFetchApp.fetch(url, reqOpts(true));
-  if (attempt.getResponseCode() === 400 && hasThinkingCfg) {
-    attempt = UrlFetchApp.fetch(url, reqOpts(false));
+  var cachedMode = cache ? cache.get('think_mode_' + model) : '';
+  var modes = thinkingModesForModel(model, cachedMode);
+  var lastAttempt = null;
+  var lastMode = modes[0];
+  for (var j = 0; j < modes.length; j++) {
+    var mode = modes[j];
+    lastMode = mode;
+    var payload = JSON.stringify({
+      contents: contents,
+      generationConfig: buildOcrGenerationConfig(mode, maxTokensOverride)
+    });
+    try {
+      var attempt = UrlFetchApp.fetch(url, {
+        method: 'post',
+        contentType: 'application/json',
+        muteHttpExceptions: true,
+        headers: { 'x-goog-api-key': apiKey },
+        payload: payload
+      });
+    } catch (fetchErr) {
+      return { attempt: null, mode: mode, fetchError: String((fetchErr && fetchErr.message) || fetchErr) };
+    }
+    lastAttempt = attempt;
+    var code = attempt.getResponseCode();
+    if (code === 400 && j < modes.length - 1) {
+      if (cache && mode === cachedMode) cache.remove('think_mode_' + model);
+      continue;
+    }
+    if (code === 200 && cache) {
+      cache.put('think_mode_' + model, mode, 21600);
+    }
+    return { attempt: attempt, mode: mode, fetchError: '' };
   }
-  return attempt;
+  return { attempt: lastAttempt, mode: lastMode, fetchError: '' };
 }
 
 function handleOcr_(user, body) {
@@ -251,11 +255,20 @@ function handleOcr_(user, body) {
   var tried = [];
   var started = Date.now();
   for (var i = 0; i < models.length; i++) {
-    if (i > 0 && Date.now() - started > 65000) break;
+    if (i > 0 && Date.now() - started > 45000) break;
     var model = models[i];
     var t0 = Date.now();
-    var attempt = fetchGeminiModel_(model, baseContents, 4096, c.geminiKey);
+    var callRes = fetchGeminiModel_(model, baseContents, 0, c.geminiKey, cache);
     var sec = Math.round((Date.now() - t0) / 1000);
+    if (callRes.fetchError || !callRes.attempt) {
+      if (i === 0 && cachedModel) cache.remove('ocr_ok_model');
+      console.error('Gemini (' + model + ') fetch error in ' + sec + 's: ' + callRes.fetchError);
+      tried.push(model + ':timeout(' + sec + 's)');
+      lastStatus = 504;
+      lastDetail = 'Timeout en Gemini';
+      continue;
+    }
+    var attempt = callRes.attempt;
     var status = attempt.getResponseCode();
     if (status === 200) {
       var bodyData = null;
@@ -263,7 +276,10 @@ function handleOcr_(user, body) {
       var extracted = extractOcrJson(bodyData);
       if (extracted.ok) {
         cache.put('ocr_ok_model', model, 1800);
-        return { ok: true, fields: fields, rx: normalizeOcrResult(extracted.parsed, fields), raw: extracted.raw };
+        return {
+          ok: true, fields: fields, rx: normalizeOcrResult(extracted.parsed, fields),
+          raw: extracted.raw, model: model, thinkMode: callRes.mode
+        };
       }
       if (i === 0 && cachedModel) cache.remove('ocr_ok_model');
       console.error('Gemini (' + model + ') bad OCR JSON (' + extracted.reason + ', finish=' + extracted.finishReason + ') in ' + sec + 's: ' + extracted.raw);
@@ -284,14 +300,14 @@ function handleOcr_(user, body) {
       } catch (e) { /* noop */ }
     }
     if (status === 400 || status === 404 || status === 429 || status === 500 || status === 503) {
-      if ((status === 503 || status === 429) && i < models.length - 1 && Date.now() - started < 60000) Utilities.sleep(800);
+      if ((status === 503 || status === 429) && i < models.length - 1 && Date.now() - started < 40000) Utilities.sleep(800);
       continue;
     }
     throw httpError_(502, 'Falló el reconocimiento (' + status + (lastDetail ? ': ' + lastDetail : '') + ')');
   }
   var info = tried.join(', ') + (lastDetail ? ' — ' + lastDetail : '');
-  if (lastStatus === 429 || lastStatus === 503) {
-    throw httpError_(503, 'OCR temporalmente saturado [' + info + ']. Reintentá en unos segundos.');
+  if (lastStatus === 504 || lastStatus === 429 || lastStatus === 503) {
+    throw httpError_(503, 'OCR temporalmente saturado o lento [' + info + ']. Reintentá en unos segundos.');
   }
   throw httpError_(502, 'Falló el reconocimiento [' + info + ']');
 }
@@ -677,16 +693,23 @@ function setupCheck() {
     var candidates = ocrModelCandidates_(c, '');
     var probeTried = [];
     var okModel = '';
+    var okMode = '';
     for (var i = 0; i < candidates.length; i++) {
-      var rp = fetchGeminiModel_(candidates[i], probeContents, 128, c.geminiKey);
-      var st = rp.getResponseCode();
+      cache.remove('think_mode_' + candidates[i]);
+      var rpRes = fetchGeminiModel_(candidates[i], probeContents, 256, c.geminiKey, cache);
+      if (rpRes.fetchError || !rpRes.attempt) {
+        probeTried.push(candidates[i] + ':ERR');
+        continue;
+      }
+      var st = rpRes.attempt.getResponseCode();
       if (st === 200) {
         var pd = null;
-        try { pd = JSON.parse(rp.getContentText()); } catch (e) { pd = null; }
+        try { pd = JSON.parse(rpRes.attempt.getContentText()); } catch (e) { pd = null; }
         var ext = extractOcrJson(pd);
         if (ext.ok) {
-          probeTried.push(candidates[i] + ':200(OK)');
+          probeTried.push(candidates[i] + ':200(OK,' + rpRes.mode + ')');
           okModel = candidates[i];
+          okMode = rpRes.mode;
           cache.put('ocr_ok_model', okModel, 1800);
           break;
         }
@@ -695,7 +718,8 @@ function setupCheck() {
         probeTried.push(candidates[i] + ':' + st);
       }
     }
-    out.push('Gemini OCR prueba: ' + (okModel ? 'OK (' + okModel + ')' : 'SIN RESPUESTA VÁLIDA') + ' [' + probeTried.join(', ') + ']');
+    var okSummary = okModel ? ('OK (' + okModel + ', think=' + String(okMode || '').toUpperCase() + ')') : 'SIN RESPUESTA VÁLIDA';
+    out.push('Gemini OCR prueba: ' + okSummary + ' [' + probeTried.join(', ') + ']');
   } catch (e) { out.push('Gemini: ERROR ' + e.message); }
   console.log(out.join('\n'));
   return out;
