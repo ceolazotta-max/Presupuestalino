@@ -96,6 +96,32 @@
     return { startMs: 0, stepStartMs: 0, inicioIso: '', paso1Sec: 0, paso2Sec: 0, paso3Sec: 0, paso4Sec: 0, cierreSec: 0 };
   }
 
+  function onlyDigits(s) {
+    return String(s == null ? '' : s).replace(/\D+/g, '');
+  }
+
+  function formatDniDots(s) {
+    var digits = onlyDigits(s).slice(0, 11);
+    return digits ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : '';
+  }
+
+  function applyDniMaskOnInput(el) {
+    var raw = el.value;
+    var pos = el.selectionStart != null ? el.selectionStart : raw.length;
+    var digitsLeft = onlyDigits(raw.slice(0, pos)).length;
+    var formatted = formatDniDots(raw);
+    if (el.value === formatted) return;
+    el.value = formatted;
+    var seen = 0;
+    var nextPos = formatted.length;
+    for (var i = 0; i < formatted.length; i++) {
+      if (seen >= digitsLeft) { nextPos = i; break; }
+      if (/\d/.test(formatted.charAt(i))) seen++;
+    }
+    if (digitsLeft === 0) nextPos = 0;
+    try { el.setSelectionRange(nextPos, nextPos); } catch (e) { /* noop */ }
+  }
+
   var state = {
     auth: null,       // { token, email, exp }
     image: null,      // dataURL comprimido
@@ -218,7 +244,7 @@
       if (d.rxValues) {
         document.querySelectorAll('#rx-form [data-key]').forEach(function (el) {
           if (d.rxValues[el.dataset.key] !== undefined) {
-            el.value = d.rxValues[el.dataset.key];
+            el.value = el.dataset.key === 'dni' ? formatDniDots(d.rxValues[el.dataset.key]) : d.rxValues[el.dataset.key];
             onRxInput(el);
           }
         });
@@ -231,7 +257,9 @@
         var form = $('#extra-form');
         C.EXTRA_FIELDS.forEach(function (f) {
           var el = form.elements[f.key];
-          if (el && d.extraMap[f.key] !== undefined) el.value = d.extraMap[f.key];
+          if (el && d.extraMap[f.key] !== undefined) {
+            el.value = f.key === 'dni' ? formatDniDots(d.extraMap[f.key]) : d.extraMap[f.key];
+          }
         });
         syncConditionalFields();
       }
@@ -503,12 +531,14 @@
 
   function makeInput(field, cell) {
     var c = cell || { valor: null, confianza: 'baja' };
-    var val = c.valor == null ? '' : String(c.valor);
+    var rawVal = c.valor == null ? '' : String(c.valor);
+    var val = field.key === 'dni' && rawVal ? formatDniDots(rawVal) : rawVal;
     var el = field.type === 'longtext' ? document.createElement('textarea') : document.createElement('input');
     if (el.tagName === 'INPUT') {
       el.type = 'text';
       if (['esfera', 'cilindro', 'adicion'].indexOf(field.type) >= 0) el.inputMode = 'decimal';
-      if (field.type === 'eje') el.inputMode = 'numeric';
+      if (field.type === 'eje' || field.key === 'dni') el.inputMode = 'numeric';
+      if (field.key === 'dni') el.placeholder = '99.999.999';
     }
     el.value = val;
     el.dataset.key = field.key;
@@ -516,13 +546,18 @@
     el.setAttribute('aria-label', field.label);
     el.autocomplete = 'off';
     if (c.confianza === 'baja' || c.confianza === 'media') el.classList.add('conf-' + c.confianza);
-    state.original[field.key] = val;
-    el.addEventListener('input', function () { onRxInput(el); saveDraft(); });
+    state.original[field.key] = field.key === 'dni' ? onlyDigits(rawVal) : rawVal;
+    el.addEventListener('input', function () {
+      if (field.key === 'dni') applyDniMaskOnInput(el);
+      onRxInput(el);
+      saveDraft();
+    });
     return el;
   }
 
   function onRxInput(el) {
-    el.classList.toggle('edited', el.value !== state.original[el.dataset.key]);
+    var cmpVal = el.dataset.key === 'dni' ? onlyDigits(el.value) : el.value;
+    el.classList.toggle('edited', cmpVal !== state.original[el.dataset.key]);
     validateEl(el);
     updateGroupWarnings(el.closest('.rx-group'));
   }
@@ -664,7 +699,9 @@
 
   function collectRx() {
     var out = {};
-    document.querySelectorAll('#rx-form [data-key]').forEach(function (el) { out[el.dataset.key] = el.value.trim(); });
+    document.querySelectorAll('#rx-form [data-key]').forEach(function (el) {
+      out[el.dataset.key] = el.dataset.key === 'dni' ? onlyDigits(el.value) : el.value.trim();
+    });
     return out;
   }
 
@@ -727,11 +764,11 @@
       nameInput.value = paciente;
       state.prefilledName = paciente;
     }
-    var dniDigits = String(rxValues.dni || '').replace(/\D+/g, '');
+    var dniFormatted = formatDniDots(rxValues.dni);
     var dniInput = $('#extra-form').elements.dni;
-    if (dniInput && dniDigits && (!dniInput.value.trim() || dniInput.value === state.prefilledDni)) {
-      dniInput.value = dniDigits;
-      state.prefilledDni = dniDigits;
+    if (dniInput && dniFormatted && (!dniInput.value.trim() || dniInput.value === state.prefilledDni)) {
+      dniInput.value = dniFormatted;
+      state.prefilledDni = dniFormatted;
     }
     saveIncompleteInBackground(rxValues);
     go('extra');
@@ -779,9 +816,16 @@
       el.name = f.key;
       el.dataset.label = f.label;
       el.autocomplete = 'off';
+      if (f.key === 'dni') {
+        el.inputMode = 'numeric';
+        el.placeholder = '99.999.999';
+      }
       if (f.required) el.required = true;
       el.maxLength = f.type === 'textarea' ? 1000 : 200;
-      el.addEventListener('input', saveDraft);
+      el.addEventListener('input', function () {
+        if (f.key === 'dni') applyDniMaskOnInput(el);
+        saveDraft();
+      });
       label.appendChild(span);
       label.appendChild(el);
       root.appendChild(label);
@@ -808,7 +852,9 @@
     var form = $('#extra-form');
     return C.EXTRA_FIELDS.map(function (f) {
       var el = form.elements[f.key];
-      return { key: f.key, label: f.label, value: (el && !el.disabled) ? el.value.trim() : '' };
+      var val = (el && !el.disabled) ? el.value.trim() : '';
+      if (f.key === 'dni' && val) val = onlyDigits(val);
+      return { key: f.key, label: f.label, value: val };
     });
   }
 
@@ -824,7 +870,9 @@
     var out = {};
     C.EXTRA_FIELDS.forEach(function (f) {
       var el = form.elements[f.key];
-      out[f.key] = (el && !el.disabled) ? el.value.trim() : '';
+      var val = (el && !el.disabled) ? el.value.trim() : '';
+      if (f.key === 'dni' && val) val = onlyDigits(val);
+      out[f.key] = val;
     });
     return out;
   }
@@ -959,6 +1007,20 @@
       return tokens.every(function (tk) { return hay.indexOf(tk) >= 0; });
     }) : allowed;
 
+    function pickOption(val) {
+      listEl.hidden = true;
+      onEyeSelectChange(block, itemIdx, eye, val);
+      var curCard = $('#q-items-list').querySelector('.quote-item-block[data-item-idx="' + itemIdx + '"] [data-eye="' + eye + '"]');
+      if (curCard) {
+        var inp = curCard.querySelector('[data-role="prod-search"]');
+        if (inp) {
+          var selObj = state.quote.items[itemIdx] && state.quote.items[itemIdx][eye];
+          inp.value = selectedLabelForEye(selObj);
+          inp.blur();
+        }
+      }
+    }
+
     listEl.innerHTML = '';
     if (!filtered.length) {
       var empty = document.createElement('div');
@@ -979,8 +1041,7 @@
         btn.appendChild(priceSpan);
         btn.addEventListener('mousedown', function (ev) {
           ev.preventDefault();
-          listEl.hidden = true;
-          onEyeSelectChange(block, itemIdx, eye, p.codigo);
+          pickOption(p.codigo);
         });
         listEl.appendChild(btn);
       });
@@ -992,8 +1053,7 @@
     manBtn.textContent = '➕ Carga manual (cristal no listado)';
     manBtn.addEventListener('mousedown', function (ev) {
       ev.preventDefault();
-      listEl.hidden = true;
-      onEyeSelectChange(block, itemIdx, eye, '__manual__');
+      pickOption('__manual__');
     });
     listEl.appendChild(manBtn);
   }
@@ -1997,11 +2057,13 @@
       var em = entry.extraMap || {};
       C.EXTRA_FIELDS.forEach(function (f) {
         var el = form.elements[f.key];
-        if (el && em[f.key] !== undefined && em[f.key] !== null) el.value = String(em[f.key]);
+        if (el && em[f.key] !== undefined && em[f.key] !== null) {
+          el.value = f.key === 'dni' ? formatDniDots(em[f.key]) : String(em[f.key]);
+        }
       });
       syncConditionalFields();
       state.prefilledName = em.nombre || entry.nombre || '';
-      state.prefilledDni = em.dni || entry.dni || '';
+      state.prefilledDni = formatDniDots(em.dni || entry.dni);
 
       var rx = collectRx();
       var opts = Array.isArray(entry.options) ? entry.options : [];
@@ -2067,7 +2129,7 @@
       }).join(' · ');
       btn.innerHTML =
         '<div class="lookup-top">' +
-        '<span class="lookup-name">' + esc(entry.nombre || '—') + (entry.dni ? ' · DNI ' + esc(entry.dni) : '') + '</span>' +
+        '<span class="lookup-name">' + esc(entry.nombre || '—') + (entry.dni ? ' · DNI ' + esc(formatDniDots(entry.dni)) : '') + '</span>' +
         '<span class="status-pill ' + statusClassFor(st) + '">' + esc(st) + '</span>' +
         '</div>' +
         '<div class="lookup-sub">Fecha: ' + esc(entry.fecha || '—') +
@@ -2282,6 +2344,9 @@
 
     $('#btn-open-lookup').addEventListener('click', openLookupModal);
     $('#btn-lookup-close').addEventListener('click', function () { $('#lookup-modal').hidden = true; });
+    $('#lookup-query').addEventListener('input', function (e) {
+      if (/^\s*[\d.\s]+\s*$/.test(e.target.value)) applyDniMaskOnInput(e.target);
+    });
     $('#lookup-form').addEventListener('submit', runLookupSearch);
 
     $('#btn-annul-quote').addEventListener('click', openAnnulModal);

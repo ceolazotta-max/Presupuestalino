@@ -541,11 +541,19 @@ test('Logic.searchBudgetsInSheetRows busca por nombre o DNI, agrupa UUID e inclu
   assert.equal(byName[1].estado, 'ANULADO');
   assert.equal(byName[1].extraMap.derivacion_secretaria, 'Lucía');
 
-  // Búsqueda por DNI encuentra INCOMPLETO
+  // Búsqueda por DNI encuentra INCOMPLETO (acepta DNI con o sin puntos)
   const byDni = L.searchBudgetsInSheetRows(rows, '28999');
   assert.equal(byDni.length, 1);
   assert.equal(byDni[0].estado, 'INCOMPLETO');
   assert.equal(byDni[0].nombre, 'García Ana');
+  assert.equal(L.searchBudgetsInSheetRows(rows, '30.123.456').length, 2);
+
+  // Formato DNI con separador de miles y guardado sin separador
+  assert.equal(L.formatDniDots('99999999'), '99.999.999');
+  assert.equal(L.formatDniDots('9.999.999'), '9.999.999');
+  assert.deepEqual(L.sanitizeExtraFields([{ key: 'dni', label: 'DNI', value: '99.999.999' }]), [
+    { label: 'DNI', value: 99999999 }
+  ]);
 
   // Mock.handle action 'search' funciona en modo demo
   const mockRes = await Mock.handle({ action: 'search', query: '30123' });

@@ -535,6 +535,12 @@ function onlyDigits_(s) {
   return String(s == null ? '' : s).replace(/\D+/g, '');
 }
 
+/** Formatea dígitos de DNI con separador de miles ("99999999" → "99.999.999"). */
+function formatDniDots(s) {
+  var digits = onlyDigits_(s).slice(0, 11);
+  return digits ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : '';
+}
+
 /** Busca y agrupa presupuestos en filas de Google Sheets por Nombre cliente o DNI, ordenados de más nuevo a más viejo. */
 function searchBudgetsInSheetRows(rows, query) {
   if (!Array.isArray(rows) || rows.length < 2) return [];
@@ -681,6 +687,7 @@ if (typeof module !== 'undefined' && module.exports) {
     extractOcrJson: extractOcrJson, thinkingModesForModel: thinkingModesForModel,
     buildOcrGenerationConfig: buildOcrGenerationConfig,
     searchBudgetsInSheetRows: searchBudgetsInSheetRows,
+    formatDniDots: formatDniDots,
     formatPersonName: formatPersonName, toSheetValue: toSheetValue,
     PAYMENT_HEADERS: PAYMENT_HEADERS, SEED_PAYMENT_ROWS: SEED_PAYMENT_ROWS,
     parsePaymentRows: parsePaymentRows

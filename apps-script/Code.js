@@ -369,8 +369,14 @@ function buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel,
   if (body.rx && typeof body.rx === 'object') {
     var rx = body.rx;
     rxFields_().forEach(function (f) {
-      var v = toSheetValue(rx[f.key]);
-      if (f.key === 'paciente' && typeof v === 'string' && v) v = formatPersonName(v);
+      var v;
+      if (f.key === 'dni') {
+        var dniD = String(rx[f.key] == null ? '' : rx[f.key]).replace(/\D+/g, '');
+        v = dniD ? toSheetValue(dniD, 20) : '';
+      } else {
+        v = toSheetValue(rx[f.key]);
+        if (f.key === 'paciente' && typeof v === 'string' && v) v = formatPersonName(v);
+      }
       record.push([f.label, v]);
     });
     var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
@@ -423,10 +429,13 @@ function handleSearch_(user, body) {
   var sheet = c.sheetName ? ss.getSheetByName(c.sheetName) : ss.getSheets()[0];
   if (!sheet || sheet.getLastRow() < 2) return { ok: true, results: [] };
 
-  var rawRows = sheet.getDataRange().getValues().map(function (row, idx) {
-    return row.map(function (cell) {
+  var rawSheetRows = sheet.getDataRange().getValues();
+  var sheetHeaders = (rawSheetRows[0] || []).map(function (h) { return String(h || '').trim().toLowerCase(); });
+  var rawRows = rawSheetRows.map(function (row, idx) {
+    return row.map(function (cell, colIdx) {
       if (idx > 0 && cell instanceof Date) {
-        return Utilities.formatDate(cell, c.tz, 'yyyy-MM-dd HH:mm:ss');
+        var fmt = sheetHeaders[colIdx] === 'fecha receta' ? 'dd/MM/yyyy' : 'yyyy-MM-dd HH:mm:ss';
+        return Utilities.formatDate(cell, c.tz, fmt);
       }
       return cell;
     });

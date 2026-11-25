@@ -1,4 +1,4 @@
-var CACHE = 'presupuestalino-v7';
+var CACHE = 'presupuestalino-v8';
 var ASSETS = [
   './',
   './index.html',
