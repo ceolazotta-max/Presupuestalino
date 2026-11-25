@@ -274,6 +274,34 @@
     return null;
   }
 
+  function checkProductForPair(product, effOd, effOi, uso) {
+    if (!product) return { allowed: false, reason: 'Sin producto seleccionado' };
+    var pairRank = Math.max(getEyeMinTier(effOd, uso).rank, getEyeMinTier(effOi, uso).rank);
+    var chkOd = checkProductForEye(product, effOd, uso, pairRank);
+    if (!chkOd.allowed) return chkOd;
+    return checkProductForEye(product, effOi, uso, pairRank);
+  }
+
+  function sameManualProduct(a, b) {
+    var ma = (a && a.manual) || {};
+    var mb = (b && b.manual) || {};
+    return normText(ma.nombre) === normText(mb.nombre) &&
+      (ma.tipo || 'Stock') === (mb.tipo || 'Stock') &&
+      (ma.diseno || 'Monofocal') === (mb.diseno || 'Monofocal') &&
+      String(ma.indice || '') === String(mb.indice || '') &&
+      normText(ma.tratamiento) === normText(mb.tratamiento);
+  }
+
+  function areSameEyeProduct(selOd, selOi, prodOd, prodOi) {
+    if (!prodOd || !prodOi) return false;
+    var mOd = (selOd && selOd.mode) || 'catalog';
+    var mOi = (selOi && selOi.mode) || 'catalog';
+    if (mOd !== mOi) return false;
+    if (mOd === 'manual') return sameManualProduct(selOd, selOi);
+    if (selOd && selOd.codigo && selOi && selOi.codigo) return selOd.codigo === selOi.codigo;
+    return normText(prodOd.nombre) === normText(prodOi.nombre);
+  }
+
   function normText(s) { return String(s || '').trim().toLowerCase(); }
 
   function validateQuote(rx, quoteState, catalog) {
@@ -319,6 +347,8 @@
     if (includeOd && includeOi && prodOd && prodOi && prodOd.nombre && prodOi.nombre) {
       if (prodOd.tipo !== prodOi.tipo) {
         errors.push('Ambos ojos deben tener el mismo rango (' + prodOd.tipo + ' vs ' + prodOi.tipo + ').');
+      } else if (!areSameEyeProduct(quoteState.od, quoteState.oi, prodOd, prodOi)) {
+        errors.push('En Ambos ojos, el cristal de OD y OI debe coincidir exactamente.');
       }
       if (prodOd.indice && prodOi.indice && prodOd.indice !== prodOi.indice) {
         warnings.push('Asimetría de índice entre ojos (OD ' + prodOd.indice + ' vs OI ' + prodOi.indice + ').');
@@ -451,6 +481,8 @@
     getEyeMinTier: getEyeMinTier,
     canEyeUseStock: canEyeUseStock,
     checkProductForEye: checkProductForEye,
+    checkProductForPair: checkProductForPair,
+    areSameEyeProduct: areSameEyeProduct,
     resolveEyeProduct: resolveEyeProduct,
     validateQuote: validateQuote,
     calculateTotals: calculateTotals

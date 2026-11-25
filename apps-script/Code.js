@@ -24,6 +24,7 @@ var OCR_PROMPT = [
   'tratamientos pedidos, teléfonos, sellos legibles) va en "anotaciones_extra" (máximo 5 items) con su transcripción tentativa',
   'y ubicación aproximada (ej "margen inferior derecho").',
   'Ignorá códigos QR, códigos de barras, números administrativos/afiliado del formulario y textos legales del membrete.',
+  'En "dni", extraé solo los números del DNI/documento del paciente si figura (sin puntos ni espacios); si no está o está tapado, null.',
   'En "paciente" y "medico", formateá SIEMPRE como "Apellido Nombre" (primero apellido y luego nombre, en formato Título, sin comas ni prefijos Dr./Dra.).',
   'es_receta_optica = false si la imagen claramente no es una receta óptica.'
 ].join(' ');
@@ -46,6 +47,7 @@ function doPost(e) {
     switch (body.action) {
       case 'ping': return json_({ ok: true, email: user.email });
       case 'catalog': return json_(handleCatalog_(user));
+      case 'search': return json_(handleSearch_(user, body));
       case 'ocr': return json_(handleOcr_(user, body));
       case 'save': return json_(handleSave_(user, body));
       default: throw httpError_(400, 'Acción desconocida');
@@ -404,7 +406,32 @@ function buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel,
   }
 
   record.push(['Foto', fotoUrl]);
+  if (body.originUuid && isValidUuid(body.originUuid) && body.originUuid !== body.uuid) {
+    record.push(['Presupuesto Origen UUID', sanitizeCell(body.originUuid, 40)]);
+  }
   return record;
+}
+
+function handleSearch_(user, body) {
+  var c = cfg_();
+  if (!c.sheetId) throw httpError_(500, 'Falta SHEET_ID');
+  rateLimit_('search', user.email, 120);
+  var query = String((body && body.query) || '').trim();
+  if (query.length < 2) return { ok: true, results: [] };
+
+  var ss = SpreadsheetApp.openById(c.sheetId);
+  var sheet = c.sheetName ? ss.getSheetByName(c.sheetName) : ss.getSheets()[0];
+  if (!sheet || sheet.getLastRow() < 2) return { ok: true, results: [] };
+
+  var rawRows = sheet.getDataRange().getValues().map(function (row, idx) {
+    return row.map(function (cell) {
+      if (idx > 0 && cell instanceof Date) {
+        return Utilities.formatDate(cell, c.tz, 'yyyy-MM-dd HH:mm:ss');
+      }
+      return cell;
+    });
+  });
+  return { ok: true, results: searchBudgetsInSheetRows(rawRows, query) };
 }
 
 function pushQuoteRecordFields_(record, q, idx) {
@@ -457,16 +484,26 @@ function handleSave_(user, body) {
     var existingRow0 = found ? sheet.getRange(foundRows[0], 1, 1, lastCol).getValues()[0] : [];
 
     var fotoCol = existingHeaders.indexOf('Foto');
-    var fotoUrl = (found && fotoCol >= 0) ? String(existingRow0[fotoCol] || '') : '';
+    var bodyFotoUrl = (typeof body.fotoUrl === 'string' && /^https:\/\/drive\.google\.com\//i.test(body.fotoUrl.trim()))
+      ? body.fotoUrl.trim() : '';
+    var fotoUrl = (found && fotoCol >= 0 && existingRow0[fotoCol])
+      ? String(existingRow0[fotoCol]) : bodyFotoUrl;
     var fileName = '';
 
     if (!fotoUrl) {
-      if (!img) throw httpError_(400, 'Falta la imagen');
-      fileName = buildPhotoFileName(stamp, name, img.mime);
-      var blob = Utilities.newBlob(Utilities.base64Decode(img.data), img.mime, fileName);
-      var file = DriveApp.getFolderById(c.folderId).createFile(blob);
-      file.setDescription('Subida por ' + user.email + ' · ' + body.uuid);
-      fotoUrl = file.getUrl();
+      if (!img) {
+        if (body.isReflotado || stage === 'abandonado' || stage === 'anulado') {
+          fotoUrl = '';
+        } else {
+          throw httpError_(400, 'Falta la imagen');
+        }
+      } else {
+        fileName = buildPhotoFileName(stamp, name, img.mime);
+        var blob = Utilities.newBlob(Utilities.base64Decode(img.data), img.mime, fileName);
+        var file = DriveApp.getFolderById(c.folderId).createFile(blob);
+        file.setDescription('Subida por ' + user.email + ' · ' + body.uuid);
+        fotoUrl = file.getUrl();
+      }
     } else if (name && name !== 'Pendiente') {
       try {
         var drvId = extractDriveId_(fotoUrl);
@@ -487,13 +524,16 @@ function handleSave_(user, body) {
     var statusLabel = 'PRESUPUESTADO';
     if (stage === 'incompleto') statusLabel = 'INCOMPLETO';
     else if (stage === 'abandonado') statusLabel = 'ABANDONADO';
+    else if (stage === 'anulado') statusLabel = 'ANULADO';
     else if (stage === 'cerrado') statusLabel = (cData && cData.sold) ? 'VENTA CONCRETADA' : 'NO CONCRETADA';
 
-    // Sincronizar Nombre cliente y Nombre paciente si uno falta.
+    // Sincronizar Nombre cliente <-> Paciente y DNI <-> DNI paciente si uno falta.
     var extraFields = Array.isArray(body.extraFields) ? sanitizeExtraFields(body.extraFields) : [];
     var extraNameObj = null;
+    var extraDniObj = null;
     for (var ei = 0; ei < extraFields.length; ei++) {
-      if (extraFields[ei].label === 'Nombre cliente') { extraNameObj = extraFields[ei]; break; }
+      if (extraFields[ei].label === 'Nombre cliente') extraNameObj = extraFields[ei];
+      if (extraFields[ei].label === 'DNI') extraDniObj = extraFields[ei];
     }
     var rxPaciente = (body.rx && body.rx.paciente) ? formatPersonName(body.rx.paciente) : '';
     var resolvedPersonName = (extraNameObj && extraNameObj.value) || rxPaciente || (name !== 'Pendiente' ? formatPersonName(name) : '');
@@ -505,6 +545,19 @@ function handleSave_(user, body) {
       }
       if (body.rx && typeof body.rx === 'object' && !body.rx.paciente) {
         body.rx.paciente = resolvedPersonName;
+      }
+    }
+    var rxDniDigits = (body.rx && body.rx.dni) ? String(body.rx.dni).replace(/\D+/g, '') : '';
+    var resolvedDni = (extraDniObj && extraDniObj.value !== '' ? String(extraDniObj.value).replace(/\D+/g, '') : '') || rxDniDigits;
+    if (resolvedDni) {
+      var dniSheetVal = toSheetValue(resolvedDni, 20);
+      if (extraDniObj) {
+        if (!extraDniObj.value) extraDniObj.value = dniSheetVal;
+      } else {
+        extraFields.push({ label: 'DNI', value: dniSheetVal });
+      }
+      if (body.rx && typeof body.rx === 'object' && !body.rx.dni) {
+        body.rx.dni = resolvedDni;
       }
     }
 

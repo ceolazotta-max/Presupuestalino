@@ -19,6 +19,7 @@ window.APP_CONFIG = {
   // Formulario de datos adicionales. type: text | tel | email | textarea | select
   EXTRA_FIELDS: [
     { key: 'nombre', label: 'Nombre cliente', type: 'text', required: true, autocomplete: 'name' },
+    { key: 'dni', label: 'DNI', type: 'tel', required: false },
     { key: 'telefono', label: 'Teléfono', type: 'tel', required: true, autocomplete: 'tel' },
     { key: 'email', label: 'Email cliente', type: 'email', required: true, autocomplete: 'email' },
     {
@@ -34,6 +35,13 @@ window.APP_CONFIG = {
       type: 'text',
       required: true,
       showWhen: { field: 'derivacion', values: ['Derivado por Doctor', 'Derivado por Doctor y Secretaria'] }
+    },
+    {
+      key: 'derivacion_secretaria',
+      label: 'Nombre Secretaria',
+      type: 'text',
+      required: true,
+      showWhen: { field: 'derivacion', values: ['Derivado por Secretaria', 'Derivado por Doctor y Secretaria'] }
     },
     {
       key: 'origen',

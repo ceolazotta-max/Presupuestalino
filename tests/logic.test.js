@@ -93,8 +93,8 @@ test('buildRow respeta encabezados existentes, agrega faltantes y preserva valor
 test('schema Gemini cubre todos los campos', () => {
   const f = L.buildRxFields();
   const s = L.buildRxSchema(f);
-  assert.equal(f.length, 22);
-  assert.equal(new Set(f.map((x) => x.key)).size, 22);
+  assert.equal(f.length, 23);
+  assert.equal(new Set(f.map((x) => x.key)).size, 23);
   assert.deepEqual(Object.keys(s.properties.campos.properties), f.map((x) => x.key));
 });
 
@@ -137,7 +137,7 @@ test('mockFields coincide con buildRxFields de Logic.js', () => {
 test('Mock.handle simula ocr y save', async () => {
   const ocr = await Mock.handle({ action: 'ocr' });
   assert.equal(ocr.ok, true);
-  assert.equal(ocr.fields.length, 22);
+  assert.equal(ocr.fields.length, 23);
 
   const save = await Mock.handle({ action: 'save', photoName: 'María Gómez' });
   assert.equal(save.ok, true);
@@ -323,7 +323,7 @@ test('Logic catálogo y medios de pago sincronizados con Quote', () => {
   assert.equal(totals.cardGroups[1].options[0].total, 110000);
 });
 
-test('Logic.normalizeOcrResult completa las 22 claves y normaliza anotaciones', () => {
+test('Logic.normalizeOcrResult completa las 23 claves y normaliza anotaciones', () => {
   const fields = L.buildRxFields();
   const norm = L.normalizeOcrResult({
     es_receta_optica: true,
@@ -338,7 +338,7 @@ test('Logic.normalizeOcrResult completa las 22 claves y normaliza anotaciones', 
     ]
   }, fields);
   assert.equal(norm.es_receta_optica, true);
-  assert.equal(Object.keys(norm.campos).length, 22);
+  assert.equal(Object.keys(norm.campos).length, 23);
   assert.deepEqual(norm.campos.lejos_od_esfera, { valor: '-2.00', confianza: 'alta' });
   assert.deepEqual(norm.campos.lejos_oi_esfera, { valor: '-1.50', confianza: 'media' });
   assert.deepEqual(norm.campos.lejos_od_cilindro, { valor: null, confianza: 'baja' });
@@ -462,4 +462,93 @@ test('Logic.thinkingModesForModel y buildOcrGenerationConfig usan enums MAYÚSCU
   const noneCfg = L.buildOcrGenerationConfig('none', 0);
   assert.equal(noneCfg.maxOutputTokens, 1800);
   assert.equal(noneCfg.thinkingConfig, undefined);
+});
+
+test('sanitizeExtraFields normaliza DNI y Nombre Secretaria', () => {
+  const ext = L.sanitizeExtraFields([
+    { key: 'dni', label: 'DNI', value: '30.123.456' },
+    { key: 'derivacion_secretaria', label: 'Nombre Secretaria', value: '  GOMEZ, LUCIA  ' }
+  ]);
+  assert.deepEqual(ext, [
+    { label: 'DNI', value: 30123456 },
+    { label: 'Nombre Secretaria', value: 'Gomez Lucia' }
+  ]);
+});
+
+test('Quote exige cristal idéntico en ambos ojos, valida por par y calcula armazón por bloque', () => {
+  const rx = {
+    lejos_od_esfera: '-1.00', lejos_od_cilindro: '-0.50', lejos_od_eje: '90',
+    lejos_oi_esfera: '-1.00', lejos_oi_cilindro: '-2.75', lejos_oi_eje: '180'
+  };
+  const eff = Q.resolveEffectiveRx(rx, 'lejos');
+  const stk = Q.SEED_CATALOG.find((p) => p.codigo === 'STK-150-AR');
+  const ext1 = Q.SEED_CATALOG.find((p) => p.codigo === 'EXT-156-AR');
+  const ext2 = Q.SEED_CATALOG.find((p) => p.codigo === 'EXT-159-BC');
+
+  // STK-150-AR no pasa por el par completo porque OI necesita Rango Extendido
+  assert.equal(Q.checkProductForPair(stk, eff.od, eff.oi, 'lejos').allowed, false);
+  assert.equal(Q.checkProductForPair(ext1, eff.od, eff.oi, 'lejos').allowed, true);
+
+  // Dos cristales distintos del mismo rango en eyesMode: 'both' -> error bloqueante
+  const mismatch = Q.validateQuote(rx, {
+    uso: 'lejos',
+    eyesMode: 'both',
+    od: { mode: 'catalog', codigo: 'EXT-156-AR', price: 36000 },
+    oi: { mode: 'catalog', codigo: 'EXT-159-BC', price: 48000 }
+  }, Q.SEED_CATALOG);
+  assert.ok(mismatch.errors.some((e) => e.includes('coincidir exactamente')));
+
+  // Armazón distinto por bloque de cristales
+  assert.equal(Q.areSameEyeProduct(
+    { mode: 'catalog', codigo: 'EXT-156-AR' },
+    { mode: 'catalog', codigo: 'EXT-156-AR' },
+    ext1, ext1
+  ), true);
+  assert.equal(Q.areSameEyeProduct(
+    { mode: 'catalog', codigo: 'EXT-156-AR' },
+    { mode: 'catalog', codigo: 'EXT-159-BC' },
+    ext1, ext2
+  ), false);
+
+  const grp1 = Q.calculateTotals({
+    eyesMode: 'both', od: { price: 36000 }, oi: { price: 36000 },
+    frame: { mode: 'nuevo', price: 20000 }, discount: 0, deposit: 0
+  });
+  const grp2 = Q.calculateTotals({
+    eyesMode: 'both', od: { price: 36000 }, oi: { price: 36000 },
+    frame: { mode: 'propio', price: 99999 }, discount: 0, deposit: 0
+  });
+  assert.equal(grp1.listTotal, 92000);
+  assert.equal(grp2.listTotal, 72000);
+});
+
+test('Logic.searchBudgetsInSheetRows busca por nombre o DNI, agrupa UUID e incluye ANULADO ordenado por fecha desc', async () => {
+  const rows = [
+    ['Timestamp', 'Última actualización', 'UUID', 'Estado', 'Nombre cliente', 'DNI', 'Paciente', 'DNI paciente', 'Derivación', 'Nombre Secretaria', 'Opción #', 'Uso anteojo', 'Ojos cotizados', '½ Par OD', 'Tipo OD', 'Precio ½ OD', 'Armazón', 'Precio Armazón', 'Total Lista', 'Foto'],
+    ['2026-11-10 10:00:00', '2026-11-10 10:00:00', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'ANULADO', 'Pérez Juan', 30123456, 'Pérez Juan', 30123456, 'Derivado por Secretaria', 'Lucía', 1, 'lejos', 'both', 'Orgánico 1.50 Blanco', 'Stock', 18000, '', 0, 36000, ''],
+    ['2026-11-22 15:00:00', '2026-11-22 15:05:00', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'PRESUPUESTADO', 'Pérez Juan', 30123456, 'Pérez Juan', 30123456, 'No Derivado', '', 2, 'cerca', 'both', 'Orgánico 1.56 Blue Cut', 'Stock', 34000, 'Armazón nuevo · Aro completo · Azul', 25000, 93000, 'https://drive.google.com/file/d/abc/view'],
+    ['2026-11-22 15:00:00', '2026-11-22 15:05:00', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'PRESUPUESTADO', 'Pérez Juan', 30123456, 'Pérez Juan', 30123456, 'No Derivado', '', 1, 'lejos', 'both', 'Orgánico 1.50 Antirreflejo', 'Stock', 26000, 'Armazón nuevo · Aro completo · Negro', 20000, 72000, 'https://drive.google.com/file/d/abc/view'],
+    ['2026-11-25 09:00:00', '2026-11-25 09:00:00', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'INCOMPLETO', 'García Ana', 28999111, 'García Ana', 28999111, '', '', '', '', '', '', '', '', '', '', '', '']
+  ];
+
+  // Búsqueda por nombre sin tildes agrupa bbbbbbbb (2 opciones ordenadas) antes que ANULADO aaaaaaaa
+  const byName = L.searchBudgetsInSheetRows(rows, 'juan perez');
+  assert.equal(byName.length, 2);
+  assert.equal(byName[0].uuid, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+  assert.equal(byName[0].options.length, 2);
+  assert.equal(byName[0].options[0].opcion, 1);
+  assert.equal(byName[0].options[1].opcion, 2);
+  assert.equal(byName[1].estado, 'ANULADO');
+  assert.equal(byName[1].extraMap.derivacion_secretaria, 'Lucía');
+
+  // Búsqueda por DNI encuentra INCOMPLETO
+  const byDni = L.searchBudgetsInSheetRows(rows, '28999');
+  assert.equal(byDni.length, 1);
+  assert.equal(byDni[0].estado, 'INCOMPLETO');
+  assert.equal(byDni[0].nombre, 'García Ana');
+
+  // Mock.handle action 'search' funciona en modo demo
+  const mockRes = await Mock.handle({ action: 'search', query: '30123' });
+  assert.equal(mockRes.ok, true);
+  assert.ok(mockRes.results.length >= 2);
 });

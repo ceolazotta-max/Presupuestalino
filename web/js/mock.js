@@ -8,6 +8,7 @@
   function mockFields() {
     var f = [
       { key: 'paciente', label: 'Paciente', group: 'encabezado', type: 'text' },
+      { key: 'dni', label: 'DNI paciente', group: 'encabezado', type: 'text' },
       { key: 'fecha_receta', label: 'Fecha receta', group: 'encabezado', type: 'date' },
       { key: 'medico', label: 'Médico', group: 'encabezado', type: 'text' },
       { key: 'matricula', label: 'Matrícula', group: 'encabezado', type: 'text' }
@@ -39,6 +40,7 @@
     es_receta_optica: true,
     campos: {
       paciente: V('Juan Pérez', 'alta'),
+      dni: V('30123456', 'media'),
       fecha_receta: V('12/11/2026', 'media'),
       medico: V('Dra. L. Fernández', 'media'),
       matricula: V('MN 45.120', 'baja'),
@@ -69,6 +71,70 @@
 
   var demoExtraCatalog = [];
   var demoSavedUuids = {};
+  var demoBudgets = [
+    {
+      uuid: '11111111-1111-4111-8111-111111111111',
+      fecha: '2026-11-24 17:30:00',
+      estado: 'PRESUPUESTADO',
+      nombre: 'Pérez Juan',
+      dni: '30123456',
+      fotoUrl: '',
+      rx: {
+        paciente: 'Pérez Juan', dni: '30123456', fecha_receta: '12/11/2026', medico: 'Fernández L.', matricula: 'MN 45.120',
+        lejos_od_esfera: '-2.25', lejos_od_cilindro: '-0.75', lejos_od_eje: '180',
+        lejos_oi_esfera: '-2.00', lejos_oi_cilindro: '-0.50', lejos_oi_eje: '5',
+        cerca_od_esfera: '', cerca_od_cilindro: '', cerca_od_eje: '',
+        cerca_oi_esfera: '', cerca_oi_cilindro: '', cerca_oi_eje: '',
+        adicion: '+1.75', dip: '62', prisma: '', tipo_lente: 'Multifocal', tratamientos: 'Antirreflejo', observaciones: 'Uso permanente'
+      },
+      extras: ['llamar antes de entregar'],
+      extraMap: {
+        nombre: 'Pérez Juan', dni: '30123456', telefono: '3515550101', email: 'juan@ejemplo.com',
+        derivacion: 'Derivado por Secretaria', derivacion_doctor: '', derivacion_secretaria: 'Lucía',
+        origen: 'Calle', origen_nombre: '', origen_red: '', notas: 'Demo vigente', vendedor: 'Gabriel'
+      },
+      options: [{
+        opcion: 1, uso: 'lejos', eyesMode: 'both',
+        odNombre: 'Orgánico 1.50 Antirreflejo', odTipo: 'Stock', odPrecio: '26000',
+        oiNombre: 'Orgánico 1.50 Antirreflejo', oiTipo: 'Stock', oiPrecio: '26000',
+        armazon: 'Armazón nuevo · Aro completo · Vulk negro', armazonPrecio: '45000',
+        descuento: '5000 (Promo)', sena: '10000', totalLista: '92000'
+      }]
+    },
+    {
+      uuid: '22222222-2222-4222-8222-222222222222',
+      fecha: '2026-11-18 11:15:00',
+      estado: 'ANULADO',
+      nombre: 'Pérez Juan',
+      dni: '30123456',
+      fotoUrl: '',
+      rx: {
+        paciente: 'Pérez Juan', dni: '30123456', fecha_receta: '12/11/2026', medico: 'Fernández L.', matricula: 'MN 45.120',
+        lejos_od_esfera: '-2.25', lejos_od_cilindro: '-0.75', lejos_od_eje: '180',
+        lejos_oi_esfera: '-2.00', lejos_oi_cilindro: '-0.50', lejos_oi_eje: '5',
+        cerca_od_esfera: '', cerca_od_cilindro: '', cerca_od_eje: '',
+        cerca_oi_esfera: '', cerca_oi_cilindro: '', cerca_oi_eje: '',
+        adicion: '+1.75', dip: '62', prisma: '', tipo_lente: 'Multifocal', tratamientos: 'Blue Cut', observaciones: ''
+      },
+      extras: [],
+      extraMap: {
+        nombre: 'Pérez Juan', dni: '30123456', telefono: '3515550101', email: 'juan@ejemplo.com',
+        derivacion: 'No Derivado', derivacion_doctor: '', derivacion_secretaria: '',
+        origen: 'Calle', origen_nombre: '', origen_red: '', notas: '', vendedor: 'Micaela'
+      },
+      options: [{
+        opcion: 1, uso: 'lejos', eyesMode: 'both',
+        odNombre: 'Orgánico 1.56 Blue Cut', odTipo: 'Stock', odPrecio: '34000',
+        oiNombre: 'Orgánico 1.56 Blue Cut', oiTipo: 'Stock', oiPrecio: '34000',
+        armazon: '', armazonPrecio: '0',
+        descuento: '0', sena: '0', totalLista: '68000'
+      }]
+    }
+  ];
+
+  function normDemo_(s) {
+    return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  }
 
   async function handle(payload) {
     if (payload.action === 'catalog') {
@@ -77,6 +143,17 @@
       var base = q ? q.SEED_CATALOG : [];
       var payCfg = q ? q.DEFAULT_PAYMENT_CONFIG : null;
       return { ok: true, items: base.concat(demoExtraCatalog), paymentConfig: payCfg };
+    }
+    if (payload.action === 'search') {
+      await wait(150);
+      var qStr = normDemo_(payload.query);
+      var qDig = String(payload.query || '').replace(/\D+/g, '');
+      var hits = demoBudgets.filter(function (b) {
+        var nameOk = qStr.length >= 2 && normDemo_(b.nombre).indexOf(qStr) >= 0;
+        var dniOk = qDig.length >= 3 && String(b.dni || '').replace(/\D+/g, '').indexOf(qDig) >= 0;
+        return nameOk || dniOk;
+      }).sort(function (a, b) { return String(b.fecha).localeCompare(String(a.fecha)); });
+      return { ok: true, results: hits };
     }
     await wait(payload.stage === 'incompleto' ? 200 : 800);
     if (payload.action === 'ocr') {
@@ -111,6 +188,34 @@
       var p = function (n) { return String(n).padStart(2, '0'); };
       var stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '_' +
         p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+      var nowStr = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+        p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+      var stageMap = { incompleto: 'INCOMPLETO', abandonado: 'ABANDONADO', anulado: 'ANULADO', presupuestado: 'PRESUPUESTADO' };
+      var stLabel = stageMap[payload.stage] || (payload.closure && payload.closure.sold ? 'VENTA CONCRETADA' : (payload.stage === 'cerrado' ? 'NO CONCRETADA' : 'PRESUPUESTADO'));
+      var existing = demoBudgets.find(function (b) { return b.uuid === payload.uuid; });
+      if (existing) {
+        existing.fecha = nowStr;
+        existing.estado = stLabel;
+        if (Array.isArray(payload.quoteItems) && payload.quoteItems.length) existing.options = payload.quoteItems;
+      } else if (payload.uuid) {
+        var extraObj = {};
+        (payload.extraFields || []).forEach(function (ef) {
+          var mapKey = { 'Nombre cliente': 'nombre', 'DNI': 'dni', 'Teléfono': 'telefono', 'Email cliente': 'email', 'Derivación': 'derivacion', 'Nombre Doctor': 'derivacion_doctor', 'Nombre Secretaria': 'derivacion_secretaria', 'Origen': 'origen', 'Nombre Recomendador': 'origen_nombre', 'Red Social': 'origen_red', 'Notas': 'notas', 'Vendedor': 'vendedor' }[ef.label];
+          if (mapKey) extraObj[mapKey] = String(ef.value || '');
+        });
+        demoBudgets.unshift({
+          uuid: payload.uuid,
+          fecha: nowStr,
+          estado: stLabel,
+          nombre: payload.photoName || extraObj.nombre || 'Demo',
+          dni: extraObj.dni || (payload.rx && payload.rx.dni) || '',
+          fotoUrl: '',
+          rx: payload.rx || {},
+          extras: payload.extras || [],
+          extraMap: extraObj,
+          options: payload.quoteItems || []
+        });
+      }
       var name = String(payload.photoName || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'sin-nombre';
       return {
@@ -118,7 +223,7 @@
         fila: 42,
         fotoUrl: '',
         fotoNombre: stamp + '_' + name + '.jpg',
-        estado: payload.stage || 'presupuestado',
+        estado: stLabel,
         updated: existed,
         demo: true
       };

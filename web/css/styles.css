@@ -294,3 +294,67 @@ input.invalid, textarea.invalid { outline: 2px solid var(--danger); outline-offs
   padding-bottom: .3rem; border-bottom: 1px solid #e2e8f0;
   display: flex; justify-content: space-between; gap: .5rem; flex-wrap: wrap;
 }
+
+.btn.danger-outline { background: #fff; color: #b91c1c; border-color: #fca5a5; }
+.btn.danger-outline:hover { background: #fef2f2; border-color: #ef4444; }
+
+.capture-divider {
+  display: flex; align-items: center; gap: .75rem; margin: 1.15rem 0 .85rem;
+  color: var(--muted); font-size: .82rem; text-transform: uppercase; letter-spacing: .05em;
+}
+.capture-divider::before, .capture-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* Armazón dentro de cada bloque */
+.item-frame-box {
+  border-top: 1px dashed var(--border); margin-top: .85rem; padding-top: .75rem;
+}
+.item-frame-box > h4 {
+  margin: 0 0 .5rem; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--brand-dark);
+}
+
+/* Buscador dinámico de cristales */
+.combo { position: relative; }
+.combo-input-wrap { position: relative; display: flex; align-items: center; }
+.combo-input { padding-right: 2.3rem; }
+.combo-clear {
+  position: absolute; right: .35rem; background: #e2e8f0; color: #334155; border: 0;
+  width: 1.65rem; height: 1.65rem; border-radius: 999px; font-size: .78rem; font-weight: 700;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.combo-clear:hover { background: #cbd5e1; }
+.combo-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+  background: #fff; border: 1.5px solid var(--brand); border-radius: 10px;
+  box-shadow: var(--shadow); max-height: 230px; overflow-y: auto;
+}
+.combo-opt {
+  display: flex; justify-content: space-between; align-items: baseline; gap: .5rem;
+  width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid #f1f5f9;
+  padding: .55rem .7rem; font: inherit; font-size: .88rem; color: var(--text); cursor: pointer;
+}
+.combo-opt:last-child { border-bottom: 0; }
+.combo-opt:hover, .combo-opt.active { background: var(--brand-soft); color: var(--brand-dark); }
+.combo-opt-meta { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+.combo-opt.manual-opt { font-weight: 700; color: var(--brand-dark); background: #f8fafc; position: sticky; bottom: 0; border-top: 1px solid var(--border); }
+.combo-empty { padding: .65rem .75rem; font-size: .84rem; color: var(--muted); }
+
+/* Buscador de presupuestos existentes (Paso 0) */
+.lookup-card { width: 100%; max-width: 680px; max-height: 88vh; display: flex; flex-direction: column; }
+.lookup-search { display: flex; gap: .5rem; margin-bottom: .5rem; }
+.lookup-search input { flex: 1; }
+.lookup-search .btn { flex: 0 0 auto; }
+.lookup-list { display: grid; gap: .6rem; overflow-y: auto; max-height: 55vh; padding-right: .15rem; }
+.lookup-item {
+  text-align: left; width: 100%; border: 1.5px solid var(--border); border-radius: 10px;
+  padding: .75rem .85rem; background: #fff; cursor: pointer; font: inherit; transition: border-color .15s, background .15s;
+}
+.lookup-item:hover { border-color: var(--brand); background: #f8fafc; }
+.lookup-top { display: flex; justify-content: space-between; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: .3rem; }
+.lookup-name { font-weight: 800; font-size: .95rem; color: var(--text); }
+.lookup-sub { font-size: .8rem; color: var(--muted); }
+.status-pill { font-size: .72rem; font-weight: 800; padding: .18rem .55rem; border-radius: 999px; }
+.status-pill.done { background: #dcfce7; color: #166534; }
+.status-pill.quoted { background: #e0f2fe; color: #075985; }
+.status-pill.incomplete { background: #fef3c7; color: #92400e; }
+.status-pill.annulled { background: #fee2e2; color: #991b1b; }
+.status-pill.abandoned, .status-pill.lost { background: #f1f5f9; color: #475569; }

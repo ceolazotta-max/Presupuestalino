@@ -66,6 +66,8 @@
           </div>
         </div>
         <p id="capture-error" class="error" role="alert"></p>
+        <div class="capture-divider"><span>o bien</span></div>
+        <button id="btn-open-lookup" class="btn ghost" style="width:100%" type="button">📂 Levantar presupuesto existente</button>
       </div>
     </section>
 
@@ -125,34 +127,8 @@
             <button id="btn-add-quote-item" class="btn ghost full" type="button">+ Agregar más productos</button>
           </div>
 
-          <h3>Armazón, descuento y seña</h3>
+          <h3>Descuento y seña</h3>
           <div class="rx-list">
-            <label class="field">
-              <span>Armazón</span>
-              <select id="q-frame-mode">
-                <option value="none">Sin armazón / Solo cristales</option>
-                <option value="propio">Armazón propio del cliente</option>
-                <option value="nuevo_completo">Armazón nuevo — Aro completo</option>
-                <option value="nuevo_semi">Armazón nuevo — Semi al aire (Tanza)</option>
-                <option value="nuevo_aire">Armazón nuevo — Ranurado / Al aire</option>
-              </select>
-            </label>
-            <label id="q-frame-rim-wrap" class="field" hidden>
-              <span>Tipo de aro (propio)</span>
-              <select id="q-frame-rim">
-                <option value="completo">Aro completo</option>
-                <option value="semi">Semi al aire (Tanza)</option>
-                <option value="aire">Ranurado / Al aire</option>
-              </select>
-            </label>
-            <label id="q-frame-detail-wrap" class="field" hidden>
-              <span>Modelo / Detalle armazón</span>
-              <input id="q-frame-detail" type="text" maxlength="100" placeholder="Ej. Vulk negro acetato">
-            </label>
-            <label id="q-frame-price-wrap" class="field" hidden>
-              <span>Precio armazón ($)</span>
-              <input id="q-frame-price" type="number" min="0" step="100" inputmode="numeric" value="0">
-            </label>
             <label class="field">
               <span>Descuento / Obra Social ($)</span>
               <input id="q-discount" type="number" min="0" step="100" inputmode="numeric" value="0">
@@ -171,6 +147,7 @@
 
           <div class="actions">
             <button id="btn-back-extra" class="btn ghost" type="button">← Datos</button>
+            <button id="btn-annul-quote" class="btn danger-outline" type="button">🚫 Anular presupuesto</button>
             <button id="btn-to-close" class="btn primary" type="button" hidden>Finalizar / Cierre de venta →</button>
           </div>
           <p id="quote-error" class="error" role="alert"></p>
@@ -198,6 +175,7 @@
         <div class="actions">
           <button id="btn-done-print" class="btn ghost" type="button">🖨️ Imprimir / PDF</button>
           <button id="btn-done-share" class="btn ghost" type="button">📲 Enviar por WhatsApp</button>
+          <button id="btn-annul-done" class="btn danger-outline" type="button">🚫 Anular presupuesto</button>
         </div>
         <hr class="close-divider">
         <form id="close-form" autocomplete="off" novalidate>
@@ -240,6 +218,40 @@
         <button id="btn-abandon-confirm" class="btn danger" type="submit">Confirmar abandono</button>
       </div>
       <p id="abandon-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <!-- Modal Levantar Presupuesto Existente -->
+  <div id="lookup-modal" class="overlay" hidden>
+    <div class="card lookup-card">
+      <div class="quote-item-head">
+        <h2 style="margin:0">Levantar presupuesto existente</h2>
+        <button id="btn-lookup-close" class="btn ghost btn-remove-item" type="button">✕ Cerrar</button>
+      </div>
+      <p class="muted small">Buscá por <b>Nombre cliente</b> o <b>DNI</b>. Ordenados del más nuevo al más viejo (incluye incompletos y anulados).</p>
+      <form id="lookup-form" class="lookup-search" autocomplete="off">
+        <input id="lookup-query" type="search" maxlength="80" minlength="2" required placeholder="Ej. Juan Pérez o 30123456">
+        <button id="btn-lookup-submit" class="btn primary" type="submit">Buscar</button>
+      </form>
+      <p id="lookup-error" class="error" role="alert"></p>
+      <div id="lookup-results" class="lookup-list"></div>
+    </div>
+  </div>
+
+  <!-- Modal Anular Presupuesto -->
+  <div id="annul-modal" class="overlay" hidden>
+    <form id="annul-form" class="card narrow" autocomplete="off" novalidate>
+      <h2>Anular presupuesto</h2>
+      <p id="annul-hint" class="muted small">Se guardará con estado ANULADO dejando el motivo registrado.</p>
+      <label class="field">
+        <span>Motivo de anulación <b class="req">*</b></span>
+        <textarea id="annul-reason" maxlength="500" required placeholder="Ej. Cambio de receta, error de carga, cliente pidió otro cristal..."></textarea>
+      </label>
+      <div class="actions">
+        <button id="btn-annul-cancel" class="btn ghost" type="button">Volver</button>
+        <button id="btn-annul-confirm" class="btn danger" type="submit">Confirmar anulación</button>
+      </div>
+      <p id="annul-error" class="error" role="alert"></p>
     </form>
   </div>
 

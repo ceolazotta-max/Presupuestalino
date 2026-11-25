@@ -13,6 +13,7 @@ var GOOGLE_ISSUERS = ['accounts.google.com', 'https://accounts.google.com'];
 function buildRxFields() {
   var f = [
     { key: 'paciente', label: 'Paciente', group: 'encabezado', type: 'text' },
+    { key: 'dni', label: 'DNI paciente', group: 'encabezado', type: 'text' },
     { key: 'fecha_receta', label: 'Fecha receta', group: 'encabezado', type: 'date' },
     { key: 'medico', label: 'Médico', group: 'encabezado', type: 'text' },
     { key: 'matricula', label: 'Matrícula', group: 'encabezado', type: 'text' }
@@ -205,11 +206,18 @@ function sanitizeExtraFields(list) {
     var label = String((f && f.label) || '').replace(/[^\p{L}\p{N} ._()/?¿-]/gu, '').trim().slice(0, 40);
     if (key === 'nombre' || /^apellido y nombre cliente$/i.test(label)) {
       label = 'Nombre cliente';
+    } else if (key === 'dni' || /^dni$/i.test(label)) {
+      label = 'DNI';
     } else if (key === 'origen_nombre' || /^nombre$/i.test(label)) {
       label = 'Nombre Recomendador';
     }
     var val = toSheetValue(f && f.value);
-    var isName = (f && (key === 'nombre' || key === 'derivacion_doctor' || key === 'origen_nombre')) || /nombre|doctor|recomendador/i.test(label);
+    if (key === 'dni' || /^dni$/i.test(label)) {
+      var digits = String((f && f.value) == null ? '' : f.value).replace(/\D+/g, '');
+      val = digits ? toSheetValue(digits, 20) : '';
+    }
+    var isName = (f && (key === 'nombre' || key === 'derivacion_doctor' || key === 'derivacion_secretaria' || key === 'origen_nombre')) ||
+      /nombre|doctor|secretaria|recomendador/i.test(label);
     if (typeof val === 'string' && val && isName) val = formatPersonName(val);
     return { label: label, value: val };
   }).filter(function (f) { return f.label; });
@@ -515,6 +523,151 @@ function buildOcrGenerationConfig(mode, maxTokensOverride) {
   return cfg;
 }
 
+function normSearch_(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function onlyDigits_(s) {
+  return String(s == null ? '' : s).replace(/\D+/g, '');
+}
+
+/** Busca y agrupa presupuestos en filas de Google Sheets por Nombre cliente o DNI, ordenados de más nuevo a más viejo. */
+function searchBudgetsInSheetRows(rows, query) {
+  if (!Array.isArray(rows) || rows.length < 2) return [];
+  var qNorm = normSearch_(query);
+  var qDigits = onlyDigits_(query);
+  if (qNorm.length < 2 && qDigits.length < 3) return [];
+  var qTokens = qNorm ? qNorm.split(' ').filter(Boolean) : [];
+
+  var headers = rows[0].map(function (h) { return String(h || '').trim(); });
+  var hdrMap = {};
+  headers.forEach(function (h, i) {
+    var k = normSearch_(h);
+    if (k && !(k in hdrMap)) hdrMap[k] = i;
+  });
+
+  function cellAny(r, names) {
+    for (var i = 0; i < names.length; i++) {
+      var idx = hdrMap[normSearch_(names[i])];
+      if (idx !== undefined && r[idx] !== undefined && r[idx] !== null && r[idx] !== '') {
+        return String(r[idx]).trim();
+      }
+    }
+    return '';
+  }
+
+  var rxFields = buildRxFields();
+  var groups = [];
+  var byKey = {};
+
+  for (var ri = 1; ri < rows.length; ri++) {
+    var r = rows[ri] || [];
+    if (!r.some(function (c) { return c !== '' && c !== null && c !== undefined; })) continue;
+    var rawUuid = cellAny(r, ['UUID']);
+    var groupKey = rawUuid || ('legacy-row-' + (ri + 1));
+
+    var nombreCli = cellAny(r, ['Nombre cliente', 'Apellido y Nombre cliente']);
+    var paciente = cellAny(r, ['Paciente']);
+    var dniCli = cellAny(r, ['DNI']);
+    var dniPac = cellAny(r, ['DNI paciente']);
+
+    if (!byKey[groupKey]) {
+      var extraMap = {
+        nombre: nombreCli || paciente,
+        dni: dniCli || dniPac,
+        telefono: cellAny(r, ['Teléfono', 'Telefono']),
+        email: cellAny(r, ['Email cliente', 'Email']),
+        derivacion: cellAny(r, ['Derivación', 'Derivacion']),
+        derivacion_doctor: cellAny(r, ['Nombre Doctor']),
+        derivacion_secretaria: cellAny(r, ['Nombre Secretaria']),
+        origen: cellAny(r, ['Origen']),
+        origen_nombre: cellAny(r, ['Nombre Recomendador', 'Nombre']),
+        origen_red: cellAny(r, ['Red Social']),
+        notas: cellAny(r, ['Notas']),
+        vendedor: cellAny(r, ['Vendedor'])
+      };
+      var rxMap = {};
+      rxFields.forEach(function (f) { rxMap[f.key] = cellAny(r, [f.label]); });
+      if (!rxMap.paciente && nombreCli) rxMap.paciente = nombreCli;
+      if (!rxMap.dni && dniCli) rxMap.dni = dniCli;
+      var annStr = cellAny(r, ['Anotaciones extra']);
+      var extrasList = annStr ? annStr.split('; ').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+
+      byKey[groupKey] = {
+        uuid: rawUuid,
+        groupKey: groupKey,
+        rowIdx: ri + 1,
+        lastRowIdx: ri + 1,
+        fecha: cellAny(r, ['Última actualización', 'Timestamp']),
+        estado: cellAny(r, ['Estado']) || 'PRESUPUESTADO',
+        nombre: nombreCli || paciente || '—',
+        dni: dniCli || dniPac,
+        fotoUrl: cellAny(r, ['Foto']),
+        rx: rxMap,
+        extras: extrasList,
+        extraMap: extraMap,
+        options: []
+      };
+      groups.push(byKey[groupKey]);
+    }
+
+    var grp = byKey[groupKey];
+    grp.lastRowIdx = ri + 1;
+    var fAct = cellAny(r, ['Última actualización', 'Timestamp']);
+    if (fAct && (!grp.fecha || fAct > grp.fecha)) grp.fecha = fAct;
+    var est = cellAny(r, ['Estado']);
+    if (est) grp.estado = est;
+    if (!grp.nombre || grp.nombre === '—') grp.nombre = nombreCli || paciente || '—';
+    if (!grp.dni) grp.dni = dniCli || dniPac;
+    if (!grp.fotoUrl) grp.fotoUrl = cellAny(r, ['Foto']);
+
+    var uso = cellAny(r, ['Uso anteojo']);
+    var odNom = cellAny(r, ['½ Par OD', '1/2 Par OD']);
+    var oiNom = cellAny(r, ['½ Par OI', '1/2 Par OI']);
+    var totLst = cellAny(r, ['Total Lista']);
+    if (uso || odNom || oiNom || totLst) {
+      grp.options.push({
+        opcion: Number(cellAny(r, ['Opción #', 'Opcion #'])) || (grp.options.length + 1),
+        uso: uso || 'lejos',
+        eyesMode: cellAny(r, ['Ojos cotizados']) || 'both',
+        odNombre: odNom,
+        odTipo: cellAny(r, ['Tipo OD']),
+        odPrecio: cellAny(r, ['Precio ½ OD', 'Precio 1/2 OD']),
+        oiNombre: oiNom,
+        oiTipo: cellAny(r, ['Tipo OI']),
+        oiPrecio: cellAny(r, ['Precio ½ OI', 'Precio 1/2 OI']),
+        armazon: cellAny(r, ['Armazón', 'Armazon']),
+        armazonPrecio: cellAny(r, ['Precio Armazón', 'Precio Armazon']),
+        descuento: cellAny(r, ['Descuento / OS']),
+        sena: cellAny(r, ['Seña', 'Sena']),
+        totalLista: totLst
+      });
+    }
+  }
+
+  var matched = groups.filter(function (g) {
+    var nameHay = normSearch_(g.nombre + ' ' + (g.rx && g.rx.paciente || ''));
+    var nameHit = qTokens.length > 0 && qTokens.every(function (tk) { return nameHay.indexOf(tk) >= 0; });
+    var dniHay = onlyDigits_(g.dni + ' ' + (g.rx && g.rx.dni || ''));
+    var dniHit = qDigits.length >= 3 && dniHay.indexOf(qDigits) >= 0;
+    return nameHit || dniHit;
+  });
+
+  matched.forEach(function (g) {
+    g.options.sort(function (a, b) { return a.opcion - b.opcion; });
+  });
+  matched.sort(function (a, b) {
+    var cmp = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+    if (cmp !== 0) return cmp;
+    return b.lastRowIdx - a.lastRowIdx;
+  });
+  return matched.slice(0, 30);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildRxFields: buildRxFields, buildRxSchema: buildRxSchema, normalizeName: normalizeName,
@@ -527,6 +680,7 @@ if (typeof module !== 'undefined' && module.exports) {
     catalogItemToRow: catalogItemToRow, normalizeOcrResult: normalizeOcrResult,
     extractOcrJson: extractOcrJson, thinkingModesForModel: thinkingModesForModel,
     buildOcrGenerationConfig: buildOcrGenerationConfig,
+    searchBudgetsInSheetRows: searchBudgetsInSheetRows,
     formatPersonName: formatPersonName, toSheetValue: toSheetValue,
     PAYMENT_HEADERS: PAYMENT_HEADERS, SEED_PAYMENT_ROWS: SEED_PAYMENT_ROWS,
     parsePaymentRows: parsePaymentRows

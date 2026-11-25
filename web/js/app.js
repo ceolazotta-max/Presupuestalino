@@ -17,20 +17,28 @@
     };
   }
 
+  function defaultFrameState() {
+    return {
+      frameModeSelect: 'none',
+      frame: { mode: 'none', rimType: 'completo', detail: '', price: 0 }
+    };
+  }
+
   function defaultQuoteItem(uso) {
+    var fr = defaultFrameState();
     return {
       uso: uso || 'lejos',
       eyesMode: 'both',
       od: defaultQuoteEye(),
-      oi: defaultQuoteEye()
+      oi: defaultQuoteEye(),
+      frameModeSelect: fr.frameModeSelect,
+      frame: fr.frame
     };
   }
 
   function defaultQuoteState() {
     return {
       items: [defaultQuoteItem('lejos')],
-      frameModeSelect: 'none',
-      frame: { mode: 'none', rimType: 'completo', detail: '', price: 0 },
       discount: 0,
       discountNote: '',
       deposit: 0
@@ -43,22 +51,41 @@
     return e;
   }
 
+  function frameFromRaw(it, fallbackRaw) {
+    var srcFrame = (it && it.frame) || (fallbackRaw && fallbackRaw.frame) || {};
+    var fmSel = (it && it.frameModeSelect) || (fallbackRaw && fallbackRaw.frameModeSelect) || 'none';
+    return {
+      frameModeSelect: fmSel,
+      frame: Object.assign({ mode: 'none', rimType: 'completo', detail: '', price: 0 }, srcFrame)
+    };
+  }
+
   function normalizeQuoteState(raw) {
-    var q = Object.assign(defaultQuoteState(), raw || {});
-    q.frame = Object.assign(defaultQuoteState().frame, (raw && raw.frame) || {});
-    if (!Array.isArray(q.items) || !q.items.length) {
+    var q = {
+      items: [],
+      discount: Number(raw && raw.discount) || 0,
+      discountNote: String((raw && raw.discountNote) || ''),
+      deposit: Number(raw && raw.deposit) || 0
+    };
+    if (!raw || !Array.isArray(raw.items) || !raw.items.length) {
       var legacy = defaultQuoteItem((raw && raw.uso) || 'lejos');
       if (raw && raw.eyesMode) legacy.eyesMode = raw.eyesMode;
       if (raw && raw.od) legacy.od = normalizeQuoteEye(raw.od);
       if (raw && raw.oi) legacy.oi = normalizeQuoteEye(raw.oi);
+      var legFr = frameFromRaw(null, raw);
+      legacy.frameModeSelect = legFr.frameModeSelect;
+      legacy.frame = legFr.frame;
       q.items = [legacy];
     } else {
-      q.items = q.items.map(function (it) {
+      q.items = raw.items.map(function (it, idx) {
+        var fr = frameFromRaw(it, idx === 0 ? raw : null);
         return {
           uso: (it && it.uso) || 'lejos',
           eyesMode: (it && it.eyesMode) || 'both',
           od: normalizeQuoteEye(it && it.od),
-          oi: normalizeQuoteEye(it && it.oi)
+          oi: normalizeQuoteEye(it && it.oi),
+          frameModeSelect: fr.frameModeSelect,
+          frame: fr.frame
         };
       });
     }
@@ -76,7 +103,10 @@
     original: {},     // key → valor devuelto por OCR
     extras: [],       // [{ texto, ubicacion, confianza, decision: null|'keep'|'discard', originalTexto }]
     uuid: null,
+    originUuid: null,
+    existingFotoUrl: '',
     prefilledName: '',
+    prefilledDni: '',
     catalog: Q.SEED_CATALOG.slice(),
     paymentConfig: C.PAYMENT_CONFIG || Q.DEFAULT_PAYMENT_CONFIG,
     catalogLoaded: false,
@@ -133,17 +163,20 @@
   }
 
   function saveDraft() {
-    if (!state.uuid || !state.image || !state.ocr) return;
+    if (!state.uuid || (!state.image && !state.existingFotoUrl && !state.originUuid) || !state.ocr) return;
     if (['review', 'extra', 'quote', 'done'].indexOf(state.screen) < 0) return;
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         uuid: state.uuid,
+        originUuid: state.originUuid,
+        existingFotoUrl: state.existingFotoUrl,
         image: state.image,
         ocr: state.ocr,
         rxValues: collectRx(),
         extras: state.extras,
         extraMap: getExtraMap(),
         prefilledName: state.prefilledName,
+        prefilledDni: state.prefilledDni,
         quote: state.quote,
         quoteInitialized: state.quoteInitialized,
         budgetIssued: state.budgetIssued,
@@ -165,11 +198,14 @@
     if (!raw) return false;
     try {
       var d = JSON.parse(raw);
-      if (!d || !d.uuid || !d.image || !d.ocr || ['review', 'extra', 'quote', 'done'].indexOf(d.screen) < 0) return false;
+      if (!d || !d.uuid || (!d.image && !d.existingFotoUrl && !d.originUuid) || !d.ocr || ['review', 'extra', 'quote', 'done'].indexOf(d.screen) < 0) return false;
       state.uuid = d.uuid;
-      state.image = d.image;
+      state.originUuid = d.originUuid || null;
+      state.existingFotoUrl = d.existingFotoUrl || '';
+      state.image = d.image || null;
       state.ocr = d.ocr;
       state.prefilledName = d.prefilledName || '';
+      state.prefilledDni = d.prefilledDni || '';
       state.quote = normalizeQuoteState(d.quote);
       state.quoteInitialized = Boolean(d.quoteInitialized);
       state.budgetIssued = Boolean(d.budgetIssued);
@@ -407,7 +443,10 @@
       state.extras = [];
       state.original = {};
       state.uuid = newUuid();
+      state.originUuid = null;
+      state.existingFotoUrl = '';
       state.prefilledName = '';
+      state.prefilledDni = '';
       state.quoteInitialized = false;
       state.budgetIssued = false;
       state.photoUploaded = false;
@@ -512,7 +551,9 @@
     var rx = state.ocr.rx || {};
     var campos = rx.campos || {};
     state.original = {};
-    $('#review-img').src = state.image;
+    var pane = $('#screen-review .photo-pane');
+    if (pane) pane.hidden = !state.image;
+    if (state.image) $('#review-img').src = state.image;
     $('#not-rx-warning').hidden = rx.es_receta_optica !== false;
 
     var root = $('#rx-form');
@@ -639,6 +680,9 @@
       uuid: state.uuid,
       stage: 'incompleto',
       image: state.photoUploaded ? '' : state.image,
+      fotoUrl: state.existingFotoUrl || '',
+      isReflotado: Boolean(state.originUuid),
+      originUuid: state.originUuid || '',
       photoName: paciente || 'Pendiente',
       rx: rxValues,
       extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
@@ -682,6 +726,12 @@
     if (nameInput && paciente && (!nameInput.value.trim() || nameInput.value === state.prefilledName)) {
       nameInput.value = paciente;
       state.prefilledName = paciente;
+    }
+    var dniDigits = String(rxValues.dni || '').replace(/\D+/g, '');
+    var dniInput = $('#extra-form').elements.dni;
+    if (dniInput && dniDigits && (!dniInput.value.trim() || dniInput.value === state.prefilledDni)) {
+      dniInput.value = dniDigits;
+      state.prefilledDni = dniDigits;
     }
     saveIncompleteInBackground(rxValues);
     go('extra');
@@ -826,6 +876,44 @@
     return orig;
   }
 
+  function normFilterText(s) {
+    return String(s == null ? '' : s)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function copyEyeState(sel) {
+    return {
+      mode: (sel && sel.mode) || 'catalog',
+      codigo: (sel && sel.codigo) || '',
+      price: Number(sel && sel.price) || 0,
+      manual: Object.assign(defaultQuoteEye().manual, (sel && sel.manual) || {})
+    };
+  }
+
+  function formatProductOptionText(p) {
+    return p.nombre + ' [' + p.tipo + '] — ' + Q.fmtMoney(p.precioMedioPar);
+  }
+
+  function selectedLabelForEye(sel) {
+    if (!sel) return '';
+    if (sel.mode === 'manual') return '➕ Carga manual (cristal no listado)';
+    if (sel.codigo) {
+      var prod = state.catalog.find(function (p) { return p.codigo === sel.codigo; });
+      return prod ? formatProductOptionText(prod) : '';
+    }
+    return '';
+  }
+
+  function closeAllCombos(exceptEl) {
+    document.querySelectorAll('#q-items-list .combo-list').forEach(function (lst) {
+      if (exceptEl && lst.closest('.combo') === exceptEl) return;
+      lst.hidden = true;
+    });
+  }
+
   function createEyeCardHtml(eye) {
     var upper = eye === 'od' ? 'OD (Ojo Derecho)' : 'OI (Ojo Izquierdo)';
     var short = eye.toUpperCase();
@@ -836,7 +924,14 @@
       '<span class="badge" data-role="badge"></span>' +
       '</div>' +
       '<p class="rx-summary" data-role="rx"></p>' +
-      '<label class="field"><span>Cristal ' + short + '</span><select data-role="prod"></select></label>' +
+      '<div class="field"><span>Cristal ' + short + '</span>' +
+      '<div class="combo" data-role="combo">' +
+      '<div class="combo-input-wrap">' +
+      '<input class="combo-input" type="search" autocomplete="off" data-role="prod-search" placeholder="Escribí para buscar o elegí…">' +
+      '<button class="combo-clear" type="button" data-role="prod-clear" title="Quitar o cambiar cristal" hidden>✕</button>' +
+      '</div>' +
+      '<div class="combo-list" data-role="prod-list" hidden></div>' +
+      '</div></div>' +
       '<div class="manual-box" data-role="manual-box" hidden>' +
       '<label class="field"><span>Nombre / Descripción *</span><input type="text" maxlength="120" data-role="man-nombre" placeholder="' + ph + '"></label>' +
       '<div class="rx-list">' +
@@ -851,6 +946,58 @@
       '</div>';
   }
 
+  function renderComboDropdown(card, block, itemIdx, eye, filterStr) {
+    var listEl = card.querySelector('[data-role="prod-list"]');
+    var item = state.quote.items[itemIdx];
+    var sel = item ? item[eye] : null;
+    var allowed = card._allowedProducts || [];
+    var qNorm = normFilterText(filterStr);
+    var tokens = qNorm ? qNorm.split(' ').filter(Boolean) : [];
+
+    var filtered = tokens.length ? allowed.filter(function (p) {
+      var hay = normFilterText([p.nombre, p.tipo, p.diseno, p.indice, p.tratamiento, p.codigo].join(' '));
+      return tokens.every(function (tk) { return hay.indexOf(tk) >= 0; });
+    }) : allowed;
+
+    listEl.innerHTML = '';
+    if (!filtered.length) {
+      var empty = document.createElement('div');
+      empty.className = 'combo-empty';
+      empty.textContent = 'Sin coincidencias para "' + filterStr.trim() + '". Podés usar Carga manual abajo.';
+      listEl.appendChild(empty);
+    } else {
+      filtered.forEach(function (p) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'combo-opt' + (sel && sel.mode === 'catalog' && sel.codigo === p.codigo ? ' active' : '');
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = p.nombre + ' [' + p.tipo + ']';
+        var priceSpan = document.createElement('span');
+        priceSpan.className = 'combo-opt-meta';
+        priceSpan.textContent = Q.fmtMoney(p.precioMedioPar);
+        btn.appendChild(nameSpan);
+        btn.appendChild(priceSpan);
+        btn.addEventListener('mousedown', function (ev) {
+          ev.preventDefault();
+          listEl.hidden = true;
+          onEyeSelectChange(block, itemIdx, eye, p.codigo);
+        });
+        listEl.appendChild(btn);
+      });
+    }
+
+    var manBtn = document.createElement('button');
+    manBtn.type = 'button';
+    manBtn.className = 'combo-opt manual-opt' + (sel && sel.mode === 'manual' ? ' active' : '');
+    manBtn.textContent = '➕ Carga manual (cristal no listado)';
+    manBtn.addEventListener('mousedown', function (ev) {
+      ev.preventDefault();
+      listEl.hidden = true;
+      onEyeSelectChange(block, itemIdx, eye, '__manual__');
+    });
+    listEl.appendChild(manBtn);
+  }
+
   function renderQuoteItemBlocks() {
     var root = $('#q-items-list');
     var items = state.quote.items;
@@ -862,8 +1009,8 @@
       block.dataset.itemIdx = String(idx);
       block.innerHTML =
         '<div class="quote-item-head">' +
-        '<span class="quote-item-title">Opción ' + (idx + 1) + '</span>' +
-        '<button class="btn ghost btn-remove-item" type="button" data-role="remove">✕ Eliminar opción</button>' +
+        '<span class="quote-item-title">Grupo ' + (idx + 1) + '</span>' +
+        '<button class="btn ghost btn-remove-item" type="button" data-role="remove">✕ Eliminar grupo</button>' +
         '</div>' +
         '<div class="rx-list">' +
         '<label class="field"><span>Uso del anteojo</span><select data-role="uso">' +
@@ -874,12 +1021,30 @@
         '<option value="ocupacional">Ocupacional</option>' +
         '</select></label>' +
         '<label class="field"><span>Ojos a cotizar</span><select data-role="eyes">' +
-        '<option value="both">Ambos ojos (OD + OI)</option>' +
+        '<option value="both">Ambos ojos (OD + OI iguales)</option>' +
         '<option value="od">Solo OD (½ par derecho)</option>' +
         '<option value="oi">Solo OI (½ par izquierdo)</option>' +
         '</select></label>' +
         '</div>' +
-        '<div class="eyes-grid">' + createEyeCardHtml('od') + createEyeCardHtml('oi') + '</div>';
+        '<div class="eyes-grid">' + createEyeCardHtml('od') + createEyeCardHtml('oi') + '</div>' +
+        '<div class="item-frame-box">' +
+        '<h4>Armazón del grupo ' + (idx + 1) + '</h4>' +
+        '<div class="rx-list">' +
+        '<label class="field"><span>Armazón</span><select data-role="frame-mode">' +
+        '<option value="none">Sin armazón / Solo cristales</option>' +
+        '<option value="propio">Armazón propio del cliente</option>' +
+        '<option value="nuevo_completo">Armazón nuevo — Aro completo</option>' +
+        '<option value="nuevo_semi">Armazón nuevo — Semi al aire (Tanza)</option>' +
+        '<option value="nuevo_aire">Armazón nuevo — Ranurado / Al aire</option>' +
+        '</select></label>' +
+        '<label class="field" data-role="frame-rim-wrap" hidden><span>Tipo de aro (propio)</span><select data-role="frame-rim">' +
+        '<option value="completo">Aro completo</option>' +
+        '<option value="semi">Semi al aire (Tanza)</option>' +
+        '<option value="aire">Ranurado / Al aire</option>' +
+        '</select></label>' +
+        '<label class="field" data-role="frame-detail-wrap" hidden><span>Modelo / Detalle armazón</span><input type="text" maxlength="100" data-role="frame-detail" placeholder="Ej. Vulk negro acetato"></label>' +
+        '<label class="field" data-role="frame-price-wrap" hidden><span>Precio armazón ($)</span><input type="number" min="0" step="100" inputmode="numeric" data-role="frame-price" value="0"></label>' +
+        '</div></div>';
 
       block.querySelector('[data-role="remove"]').addEventListener('click', function () {
         if (state.quote.items.length <= 1) return;
@@ -901,15 +1066,57 @@
         saveDraft();
       });
       block.querySelector('[data-role="eyes"]').addEventListener('change', function (e) {
-        state.quote.items[idx].eyesMode = e.target.value;
+        var item = state.quote.items[idx];
+        item.eyesMode = e.target.value;
+        if (item.eyesMode === 'both') {
+          if (item.od.mode === 'manual' || item.od.codigo) {
+            item.oi = copyEyeState(item.od);
+          } else if (item.oi.mode === 'manual' || item.oi.codigo) {
+            item.od = copyEyeState(item.oi);
+          }
+        }
         syncQuoteControls();
         saveDraft();
       });
       ['od', 'oi'].forEach(function (eye) {
         var card = block.querySelector('[data-eye="' + eye + '"]');
-        card.querySelector('[data-role="prod"]').addEventListener('change', function () {
-          onEyeSelectChange(block, idx, eye);
+        var combo = card.querySelector('[data-role="combo"]');
+        var searchIn = card.querySelector('[data-role="prod-search"]');
+        var clearBtn = card.querySelector('[data-role="prod-clear"]');
+        var listEl = card.querySelector('[data-role="prod-list"]');
+
+        searchIn.addEventListener('focus', function () {
+          closeAllCombos(combo);
+          renderComboDropdown(card, block, idx, eye, '');
+          listEl.hidden = false;
+          try { searchIn.select(); } catch (err) { /* noop */ }
         });
+        searchIn.addEventListener('input', function () {
+          closeAllCombos(combo);
+          renderComboDropdown(card, block, idx, eye, searchIn.value);
+          listEl.hidden = false;
+        });
+        searchIn.addEventListener('blur', function () {
+          setTimeout(function () {
+            if (!combo.contains(document.activeElement)) {
+              listEl.hidden = true;
+              var curItem = state.quote.items[idx];
+              if (curItem) searchIn.value = selectedLabelForEye(curItem[eye]);
+            }
+          }, 120);
+        });
+        clearBtn.addEventListener('mousedown', function (ev) {
+          ev.preventDefault();
+          onEyeSelectChange(block, idx, eye, '');
+          var updatedCard = $('#q-items-list').querySelector('.quote-item-block[data-item-idx="' + idx + '"] [data-eye="' + eye + '"]');
+          if (updatedCard) {
+            var inp = updatedCard.querySelector('[data-role="prod-search"]');
+            renderComboDropdown(updatedCard, updatedCard.closest('.quote-item-block'), idx, eye, '');
+            updatedCard.querySelector('[data-role="prod-list"]').hidden = false;
+            inp.focus();
+          }
+        });
+
         ['man-nombre', 'man-tipo', 'man-diseno', 'man-indice', 'man-trat', 'man-save', 'price'].forEach(function (role) {
           var el = card.querySelector('[data-role="' + role + '"]');
           var evt = (el.tagName === 'SELECT' || el.type === 'checkbox') ? 'change' : 'input';
@@ -920,63 +1127,32 @@
         });
       });
 
+      block.querySelector('[data-role="frame-mode"]').addEventListener('change', function () {
+        syncBlockFrameVisibility(block, state.quote.items[idx]);
+        refreshQuotePreview();
+        saveDraft();
+      });
+      block.querySelector('[data-role="frame-rim"]').addEventListener('change', function () {
+        syncBlockFrameVisibility(block, state.quote.items[idx]);
+        refreshQuotePreview();
+        saveDraft();
+      });
+      block.querySelector('[data-role="frame-detail"]').addEventListener('input', function (e) {
+        state.quote.items[idx].frame.detail = e.target.value;
+        refreshQuotePreview();
+        saveDraft();
+      });
+      block.querySelector('[data-role="frame-price"]').addEventListener('input', function (e) {
+        state.quote.items[idx].frame.price = Math.max(0, Number(e.target.value) || 0);
+        refreshQuotePreview();
+        saveDraft();
+      });
+
       root.appendChild(block);
     });
   }
 
-  function syncEyeCard(block, item, eye, eyeRx, pairMinRank) {
-    var sel = item[eye];
-    var uso = item.uso;
-    var eyeTier = Q.getEyeMinTier(eyeRx, uso);
-    var reqRank = Math.max(eyeTier.rank, pairMinRank || 1);
-    var card = block.querySelector('[data-eye="' + eye + '"]');
-
-    card.querySelector('[data-role="rx"]').textContent = formatEyeRxLine(eyeRx);
-    var badge = card.querySelector('[data-role="badge"]');
-    if (reqRank === 3) {
-      badge.className = 'badge lab';
-      badge.textContent = eyeTier.rank === 3 ? ('Solo Laboratorio: ' + eyeTier.reason) : 'Laboratorio (por otro ojo)';
-    } else if (reqRank === 2) {
-      badge.className = 'badge ext';
-      badge.textContent = eyeTier.rank === 2 ? 'Rango Extendido o Lab' : 'Rango Extendido o Lab (por otro ojo)';
-    } else {
-      badge.className = 'badge stock';
-      badge.textContent = 'Apto Stock, Rango Ext. y Lab';
-    }
-
-    var select = card.querySelector('[data-role="prod"]');
-    select.innerHTML = '';
-    var defOpt = document.createElement('option');
-    defOpt.value = '';
-    defOpt.textContent = '— Elegir cristal —';
-    select.appendChild(defOpt);
-
-    var stillValid = false;
-    state.catalog.forEach(function (p) {
-      var chk = Q.checkProductForEye(p, eyeRx, uso, reqRank);
-      if (!chk.allowed) return;
-      var opt = document.createElement('option');
-      opt.value = p.codigo;
-      opt.textContent = p.nombre + ' [' + p.tipo + '] — ' + Q.fmtMoney(p.precioMedioPar);
-      if (sel.mode === 'catalog' && sel.codigo === p.codigo) stillValid = true;
-      select.appendChild(opt);
-    });
-
-    var manOpt = document.createElement('option');
-    manOpt.value = '__manual__';
-    manOpt.textContent = '➕ Carga manual (cristal no listado)';
-    select.appendChild(manOpt);
-
-    if (sel.mode === 'manual') {
-      select.value = '__manual__';
-    } else if (stillValid) {
-      select.value = sel.codigo;
-    } else {
-      sel.codigo = '';
-      sel.price = 0;
-      select.value = '';
-    }
-
+  function syncEyeManualDom(card, sel, uso, reqRank) {
     var isManual = sel.mode === 'manual';
     card.querySelector('[data-role="manual-box"]').hidden = !isManual;
     var tipoSel = card.querySelector('[data-role="man-tipo"]');
@@ -1000,6 +1176,73 @@
     card.querySelector('[data-role="price"]').value = sel.price ? String(sel.price) : '';
   }
 
+  function syncEyeCard(block, item, eye, eyeRx, pairMinRank, effPair) {
+    var sel = item[eye];
+    var uso = item.uso;
+    var eyeTier = Q.getEyeMinTier(eyeRx, uso);
+    var reqRank = Math.max(eyeTier.rank, pairMinRank || 1);
+    var card = block.querySelector('[data-eye="' + eye + '"]');
+
+    card.querySelector('[data-role="rx"]').textContent = formatEyeRxLine(eyeRx);
+    var badge = card.querySelector('[data-role="badge"]');
+    if (reqRank === 3) {
+      badge.className = 'badge lab';
+      badge.textContent = eyeTier.rank === 3 ? ('Solo Laboratorio: ' + eyeTier.reason) : 'Laboratorio (por otro ojo)';
+    } else if (reqRank === 2) {
+      badge.className = 'badge ext';
+      badge.textContent = eyeTier.rank === 2 ? 'Rango Extendido o Lab' : 'Rango Extendido o Lab (por otro ojo)';
+    } else {
+      badge.className = 'badge stock';
+      badge.textContent = 'Apto Stock, Rango Ext. y Lab';
+    }
+
+    var allowed = [];
+    var stillValid = false;
+    state.catalog.forEach(function (p) {
+      var chk = (item.eyesMode === 'both' && effPair)
+        ? Q.checkProductForPair(p, effPair.od, effPair.oi, uso)
+        : Q.checkProductForEye(p, eyeRx, uso, reqRank);
+      if (!chk.allowed) return;
+      allowed.push(p);
+      if (sel.mode === 'catalog' && sel.codigo === p.codigo) stillValid = true;
+    });
+    card._allowedProducts = allowed;
+
+    if (sel.mode === 'catalog' && !stillValid) {
+      sel.codigo = '';
+      sel.price = 0;
+    }
+
+    var searchIn = card.querySelector('[data-role="prod-search"]');
+    if (document.activeElement !== searchIn) {
+      searchIn.value = selectedLabelForEye(sel);
+    }
+    card.querySelector('[data-role="prod-clear"]').hidden = !(sel.mode === 'manual' || sel.codigo);
+    syncEyeManualDom(card, sel, uso, reqRank);
+  }
+
+  function syncBlockFrameVisibility(block, item) {
+    var fmSel = block.querySelector('[data-role="frame-mode"]');
+    var rimSel = block.querySelector('[data-role="frame-rim"]');
+    var fm = fmSel.value;
+    item.frameModeSelect = fm;
+    if (fm === 'none') {
+      item.frame.mode = 'none';
+      item.frame.rimType = 'completo';
+      item.frame.price = 0;
+    } else if (fm === 'propio') {
+      item.frame.mode = 'propio';
+      item.frame.rimType = rimSel.value || 'completo';
+      item.frame.price = 0;
+    } else {
+      item.frame.mode = 'nuevo';
+      item.frame.rimType = fm.replace('nuevo_', '');
+    }
+    block.querySelector('[data-role="frame-rim-wrap"]').hidden = fm !== 'propio';
+    block.querySelector('[data-role="frame-detail-wrap"]').hidden = fm === 'none';
+    block.querySelector('[data-role="frame-price-wrap"]').hidden = item.frame.mode !== 'nuevo';
+  }
+
   function syncQuoteControls() {
     var q = state.quote;
     renderQuoteItemBlocks();
@@ -1018,52 +1261,36 @@
       var tOi = Q.getEyeMinTier(eff.oi, item.uso).rank;
       var pairMinRank = item.eyesMode === 'both' ? Math.max(tOd, tOi) : 1;
 
-      syncEyeCard(block, item, 'od', eff.od, item.eyesMode === 'both' ? pairMinRank : tOd);
-      syncEyeCard(block, item, 'oi', eff.oi, item.eyesMode === 'both' ? pairMinRank : tOi);
+      syncEyeCard(block, item, 'od', eff.od, item.eyesMode === 'both' ? pairMinRank : tOd, eff);
+      syncEyeCard(block, item, 'oi', eff.oi, item.eyesMode === 'both' ? pairMinRank : tOi, eff);
+
+      block.querySelector('[data-role="frame-mode"]').value = item.frameModeSelect || 'none';
+      block.querySelector('[data-role="frame-rim"]').value = (item.frame && item.frame.rimType) || 'completo';
+      block.querySelector('[data-role="frame-detail"]').value = (item.frame && item.frame.detail) || '';
+      block.querySelector('[data-role="frame-price"]').value = String((item.frame && item.frame.price) || 0);
+      syncBlockFrameVisibility(block, item);
     });
 
-    $('#q-frame-mode').value = q.frameModeSelect;
-    $('#q-frame-rim').value = q.frame.rimType;
-    $('#q-frame-detail').value = q.frame.detail;
-    $('#q-frame-price').value = String(q.frame.price || 0);
     $('#q-discount').value = String(q.discount || 0);
     $('#q-discount-note').value = q.discountNote || '';
     $('#q-deposit').value = String(q.deposit || 0);
     $('#btn-to-close').hidden = !state.budgetIssued;
-    syncFrameVisibility();
     refreshQuotePreview();
   }
 
-  function syncFrameVisibility() {
-    var fm = $('#q-frame-mode').value;
-    state.quote.frameModeSelect = fm;
-    if (fm === 'none') {
-      state.quote.frame.mode = 'none';
-      state.quote.frame.rimType = 'completo';
-      state.quote.frame.price = 0;
-    } else if (fm === 'propio') {
-      state.quote.frame.mode = 'propio';
-      state.quote.frame.rimType = $('#q-frame-rim').value || 'completo';
-      state.quote.frame.price = 0;
-    } else {
-      state.quote.frame.mode = 'nuevo';
-      state.quote.frame.rimType = fm.replace('nuevo_', '');
-    }
-    $('#q-frame-rim-wrap').hidden = fm !== 'propio';
-    $('#q-frame-detail-wrap').hidden = fm === 'none';
-    $('#q-frame-price-wrap').hidden = state.quote.frame.mode !== 'nuevo';
-  }
-
-  function onEyeSelectChange(block, itemIdx, eye) {
+  function onEyeSelectChange(block, itemIdx, eye, val) {
     var item = state.quote.items[itemIdx];
-    var val = block.querySelector('[data-eye="' + eye + '"] [data-role="prod"]').value;
     var sel = item[eye];
     var eff = Q.resolveEffectiveRx(collectRx(), item.uso);
     var tOd = Q.getEyeMinTier(eff.od, item.uso).rank;
     var tOi = Q.getEyeMinTier(eff.oi, item.uso).rank;
     var pairMinRank = item.eyesMode === 'both' ? Math.max(tOd, tOi) : (eye === 'od' ? tOd : tOi);
 
-    if (val === '__manual__') {
+    if (!val) {
+      sel.mode = 'catalog';
+      sel.codigo = '';
+      sel.price = 0;
+    } else if (val === '__manual__') {
       sel.mode = 'manual';
       sel.codigo = '';
       sel.manual.diseno = Q.USO_TO_DISENO[item.uso] || 'Monofocal';
@@ -1074,29 +1301,14 @@
       sel.codigo = val;
       var prod = state.catalog.find(function (p) { return p.codigo === val; });
       sel.price = prod ? prod.precioMedioPar : 0;
-
-      // En ambos ojos, sincronizar el rango (Stock / Rango Extendido / Laboratorio) del otro ojo si difiere.
-      if (item.eyesMode === 'both' && prod) {
-        var otherEye = eye === 'od' ? 'oi' : 'od';
-        var otherSel = item[otherEye];
-        var otherProd = Q.resolveEyeProduct(otherSel, state.catalog);
-        if (!otherProd || otherProd.tipo !== prod.tipo) {
-          if (otherSel.mode === 'manual') {
-            otherSel.manual.tipo = prod.tipo;
-          } else {
-            var sameOk = Q.checkProductForEye(prod, eff[otherEye], item.uso, pairMinRank).allowed;
-            var match = sameOk ? prod : state.catalog.find(function (p) {
-              return p.tipo === prod.tipo && Q.checkProductForEye(p, eff[otherEye], item.uso, pairMinRank).allowed;
-            });
-            if (match) {
-              otherSel.mode = 'catalog';
-              otherSel.codigo = match.codigo;
-              otherSel.price = match.precioMedioPar;
-            }
-          }
-        }
-      }
     }
+
+    // Si cotiza ambos ojos, OD y OI deben llevar exactamente el mismo cristal.
+    if (item.eyesMode === 'both') {
+      var otherEye = eye === 'od' ? 'oi' : 'od';
+      item[otherEye] = copyEyeState(sel);
+    }
+
     syncQuoteControls();
     saveDraft();
   }
@@ -1112,24 +1324,27 @@
     sel.manual.tratamiento = card.querySelector('[data-role="man-trat"]').value;
     sel.manual.saveToCatalog = card.querySelector('[data-role="man-save"]').checked;
     sel.price = Math.max(0, Number(card.querySelector('[data-role="price"]').value) || 0);
-    if (item.eyesMode === 'both' && sel.mode === 'manual') {
+    if (item.eyesMode === 'both') {
       var otherEye = eye === 'od' ? 'oi' : 'od';
-      var otherProd = Q.resolveEyeProduct(item[otherEye], state.catalog);
-      if (item[otherEye].mode === 'manual' && otherProd && otherProd.tipo !== sel.manual.tipo) {
-        item[otherEye].manual.tipo = sel.manual.tipo;
-        block.querySelector('[data-eye="' + otherEye + '"] [data-role="man-tipo"]').value = sel.manual.tipo;
+      item[otherEye] = copyEyeState(sel);
+      var otherCard = block.querySelector('[data-eye="' + otherEye + '"]');
+      if (otherCard) {
+        var eff = Q.resolveEffectiveRx(collectRx(), item.uso);
+        var reqRank = Math.max(Q.getEyeMinTier(eff.od, item.uso).rank, Q.getEyeMinTier(eff.oi, item.uso).rank);
+        otherCard.querySelector('[data-role="prod-search"]').value = selectedLabelForEye(item[otherEye]);
+        syncEyeManualDom(otherCard, item[otherEye], item.uso, reqRank);
       }
     }
     saveDraft();
   }
 
-  function frameSummaryText() {
-    var f = state.quote.frame;
+  function frameSummaryText(frame) {
+    var f = frame || { mode: 'none', rimType: 'completo', detail: '' };
     if (f.mode === 'none') return 'Sin armazón (solo cristales)';
     var rimMap = { completo: 'Aro completo', semi: 'Semi al aire (Tanza)', aire: 'Ranurado / Al aire' };
     var tag = f.mode === 'propio' ? 'Propio del cliente' : 'Armazón nuevo';
     var parts = [tag, rimMap[f.rimType] || ''];
-    if (f.detail.trim()) parts.push(f.detail.trim());
+    if (String(f.detail || '').trim()) parts.push(String(f.detail).trim());
     return parts.filter(Boolean).join(' · ');
   }
 
@@ -1144,7 +1359,7 @@
       eyesMode: item.eyesMode,
       od: item.od,
       oi: item.oi,
-      frame: q.frame,
+      frame: item.frame || { mode: 'none', rimType: 'completo', detail: '', price: 0 },
       discount: q.discount,
       deposit: q.deposit
     };
@@ -1166,7 +1381,7 @@
       var totals = Q.calculateTotals(singleQ, payCfg);
       var prodOd = item.eyesMode !== 'oi' ? Q.resolveEyeProduct(item.od, state.catalog) : null;
       var prodOi = item.eyesMode !== 'od' ? Q.resolveEyeProduct(item.oi, state.catalog) : null;
-      var prefix = multi ? ('Opción ' + (idx + 1) + ': ') : '';
+      var prefix = multi ? ('Grupo ' + (idx + 1) + ': ') : '';
       validation.errors.forEach(function (msg) { allErrors.push(prefix + msg); });
       validation.warnings.forEach(function (msg) { allWarnings.push(prefix + msg); });
       return { item: item, eff: eff, validation: validation, totals: totals, prodOd: prodOd, prodOi: prodOi };
@@ -1186,12 +1401,13 @@
 
   function buildOptionLines(opt, q) {
     var it = opt.item;
+    var fr = it.frame || { mode: 'none', rimType: 'completo', detail: '', price: 0 };
     var t = opt.totals;
     var lines = [];
     if (it.eyesMode !== 'oi') lines.push(['½ Par OD: ' + describeEyeItem(opt.prodOd), Q.fmtMoney(t.odPrice), false]);
     if (it.eyesMode !== 'od') lines.push(['½ Par OI: ' + describeEyeItem(opt.prodOi), Q.fmtMoney(t.oiPrice), false]);
-    if (q.frame.mode !== 'none') {
-      lines.push(['Armazón: ' + frameSummaryText(), q.frame.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice), false]);
+    if (fr.mode !== 'none') {
+      lines.push(['Armazón: ' + frameSummaryText(fr), fr.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice), false]);
     }
     if (t.discountAmount > 0) {
       lines.push(['Descuento / Obra Social' + (q.discountNote ? ' (' + q.discountNote + ')' : ''), '- ' + Q.fmtMoney(t.discountAmount), false]);
@@ -1252,9 +1468,7 @@
           '<span><b>' + esc(Q.fmtMoney(p.cuotaMensual)) + '/mes</b><div class="qs-pay-sub">Total financiado: ' + esc(Q.fmtMoney(p.total)) + '</div></span></div>';
       }).join('');
 
-      var titleHtml = multi
-        ? '<div class="qs-option-title"><span>Opción ' + (idx + 1) + ' · Uso: ' + esc(usoLabel) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>'
-        : '<div class="qs-option-title"><span>Uso: ' + esc(usoLabel) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>';
+      var titleHtml = '<div class="qs-option-title"><span>Grupo ' + (idx + 1) + ' · Uso: ' + esc(usoLabel) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>';
 
       return '<div class="qs-option-block">' +
         titleHtml +
@@ -1272,7 +1486,7 @@
     // Sin tabla de graduación para el cliente (regla #3: oculta al imprimir/enviar, guardada en Sheets).
     $('#quote-sheet').innerHTML =
       '<div class="qs-head"><div><div class="qs-title">' + esc(C.OPTICA_NAME || 'Óptica') + '</div>' +
-      '<div class="qs-sub">Presupuesto' + (multi ? (' (' + snap.optionSnapshots.length + ' opciones)') : '') + '</div></div>' +
+      '<div class="qs-sub">Presupuesto' + (multi ? (' (' + snap.optionSnapshots.length + ' grupos)') : '') + '</div></div>' +
       '<div class="qs-sub">Fecha: ' + esc(snap.fechaStr) + '<br>Válido hasta: ' + esc(snap.validaStr) + '</div></div>' +
       '<div class="qs-meta">' +
       '<div><b>Cliente:</b> ' + esc(snap.extra.nombre || snap.rx.paciente || '—') + '</div>' +
@@ -1310,7 +1524,7 @@
       var t = opt.totals;
       var lines = buildOptionLines(opt, q);
       var cardGroups = getCardGroups(t);
-      var headerH = multi ? 30 : 0;
+      var headerH = 30;
       var linesH = lines.length * 36;
       var payH = 98 + cardGroups.length * 26 + t.cristalinoOptions.length * 32;
       var totalH = headerH + linesH + 6 + payH + 26;
@@ -1339,7 +1553,7 @@
     ctx.fillText(C.OPTICA_NAME || 'Óptica Cristalino', pad, 44);
     ctx.font = '16px system-ui, sans-serif';
     var subHdr = multi
-      ? ('Presupuesto Óptico · ' + blocks.length + ' opciones independientes')
+      ? ('Presupuesto Óptico · ' + blocks.length + ' grupos independientes')
       : ('Presupuesto Óptico · Uso: ' + blocks[0].usoLabel);
     ctx.fillText(subHdr, pad, 72);
     ctx.textAlign = 'right';
@@ -1356,15 +1570,13 @@
     var y = startY;
     blocks.forEach(function (blk) {
       var t = blk.t;
-      if (blk.headerH > 0) {
-        ctx.fillStyle = '#ccfbf1';
-        ctx.fillRect(pad, y - 16, W - pad * 2, 24);
-        ctx.fillStyle = '#115e59';
-        ctx.font = 'bold 15px system-ui, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('OPCIÓN ' + (blk.idx + 1) + '  ·  USO: ' + blk.usoLabel.toUpperCase(), pad + 10, y + 1);
-        y += blk.headerH;
-      }
+      ctx.fillStyle = '#ccfbf1';
+      ctx.fillRect(pad, y - 16, W - pad * 2, 24);
+      ctx.fillStyle = '#115e59';
+      ctx.font = 'bold 15px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('GRUPO ' + (blk.idx + 1) + '  ·  USO: ' + blk.usoLabel.toUpperCase(), pad + 10, y + 1);
+      y += blk.headerH;
 
       blk.lines.forEach(function (ln) {
         ctx.font = ln[2] ? 'bold 17px system-ui, sans-serif' : '15px system-ui, sans-serif';
@@ -1457,6 +1669,35 @@
     toast('Imagen descargada (' + fileName + '). Adjuntala en WhatsApp.');
   }
 
+  function buildQuoteItemsList(snap, q) {
+    return snap.optionSnapshots.map(function (opt, idx) {
+      var it = opt.item;
+      var fr = it.frame || { mode: 'none', rimType: 'completo', detail: '', price: 0 };
+      var t = opt.totals;
+      var cristalinoTxt = t.cristalinoOptions.map(function (p) {
+        return p.cuotas + '×' + Q.fmtMoney(p.cuotaMensual) + ' (' + Q.fmtMoney(p.total) + ')';
+      }).join(' | ');
+      return {
+        opcion: idx + 1,
+        uso: it.uso,
+        eyesMode: it.eyesMode,
+        odNombre: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.nombre : ''),
+        odTipo: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.tipo : ''),
+        odPrecio: it.eyesMode === 'oi' ? '' : String(t.odPrice),
+        oiNombre: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.nombre : ''),
+        oiTipo: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.tipo : ''),
+        oiPrecio: it.eyesMode === 'od' ? '' : String(t.oiPrice),
+        armazon: fr.mode === 'none' ? '' : frameSummaryText(fr),
+        armazonPrecio: String(t.framePrice),
+        descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
+        sena: String(t.depositAmount),
+        totalLista: String(t.listTotal),
+        totalEfectivo: String(t.cashTotal),
+        planCristalino: cristalinoTxt
+      };
+    });
+  }
+
   function buildBudgetSavePayload() {
     var snap = buildQuoteSnapshot();
     var extraFields = collectExtraFields();
@@ -1487,44 +1728,23 @@
       });
     });
 
-    var quoteItems = snap.optionSnapshots.map(function (opt, idx) {
-      var it = opt.item;
-      var t = opt.totals;
-      var cristalinoTxt = t.cristalinoOptions.map(function (p) {
-        return p.cuotas + '×' + Q.fmtMoney(p.cuotaMensual) + ' (' + Q.fmtMoney(p.total) + ')';
-      }).join(' | ');
-      return {
-        opcion: idx + 1,
-        uso: it.uso,
-        eyesMode: it.eyesMode,
-        odNombre: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.nombre : ''),
-        odTipo: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.tipo : ''),
-        odPrecio: it.eyesMode === 'oi' ? '' : String(t.odPrice),
-        oiNombre: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.nombre : ''),
-        oiTipo: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.tipo : ''),
-        oiPrecio: it.eyesMode === 'od' ? '' : String(t.oiPrice),
-        armazon: q.frame.mode === 'none' ? '' : frameSummaryText(),
-        armazonPrecio: String(t.framePrice),
-        descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
-        sena: String(t.depositAmount),
-        totalLista: String(t.listTotal),
-        totalEfectivo: String(t.cashTotal),
-        planCristalino: cristalinoTxt
-      };
-    });
+    var quoteItems = buildQuoteItemsList(snap, q);
 
     return {
       newCatalogItems: newCatalogItems,
       payload: {
         uuid: state.uuid,
         stage: 'presupuestado',
-        image: state.photoUploaded ? '' : state.image,
+        image: state.photoUploaded ? '' : (state.image || ''),
+        fotoUrl: state.existingFotoUrl || '',
+        isReflotado: Boolean(state.originUuid),
+        originUuid: state.originUuid || '',
         photoName: nameField ? nameField.value : '',
         rx: snap.rx,
         extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
           .map(function (x) { return x.texto.trim(); }),
         extraFields: extraFields,
-        isRx: !(state.ocr.rx && state.ocr.rx.es_receta_optica === false),
+        isRx: !(state.ocr && state.ocr.rx && state.ocr.rx.es_receta_optica === false),
         corrected: wasCorrected(snap.rx),
         newCatalogItems: newCatalogItems,
         quoteItems: quoteItems,
@@ -1635,7 +1855,10 @@
     var payload = {
       uuid: state.uuid,
       stage: 'cerrado',
-      image: state.photoUploaded ? '' : state.image,
+      image: state.photoUploaded ? '' : (state.image || ''),
+      fotoUrl: state.existingFotoUrl || '',
+      isReflotado: Boolean(state.originUuid),
+      originUuid: state.originUuid || '',
       photoName: nameField ? nameField.value : '',
       closure: sold ? {
         sold: true,
@@ -1669,7 +1892,287 @@
     }
   }
 
-  // ---------- Abandonar Presupuesto ----------
+  // ---------- Levantar Presupuesto Existente (Paso 0) ----------
+
+  function statusClassFor(estado) {
+    var s = normFilterText(estado);
+    if (s.indexOf('concretad') >= 0 && s.indexOf('no ') < 0) return 'done';
+    if (s.indexOf('anulad') >= 0) return 'annulled';
+    if (s.indexOf('incompleto') >= 0) return 'incomplete';
+    if (s.indexOf('abandon') >= 0) return 'abandoned';
+    if (s.indexOf('no concret') >= 0) return 'lost';
+    return 'quoted';
+  }
+
+  function parseDiscountFromSheet(raw) {
+    var s = String(raw || '').trim();
+    if (!s || s === '0') return { amount: 0, note: '' };
+    var m = /^([\d.,]+)\s*(?:\((.+)\))?$/.exec(s);
+    if (!m) return { amount: 0, note: '' };
+    return { amount: Math.max(0, Number(m[1].replace(',', '.')) || 0), note: (m[2] || '').trim() };
+  }
+
+  function parseFrameFromSheet(desc, priceRaw) {
+    var s = String(desc || '').trim();
+    var price = Math.max(0, Number(priceRaw) || 0);
+    if (!s || /sin armaz[oó]n/i.test(s)) return defaultFrameState();
+    var rim = 'completo';
+    if (/semi al aire|tanza/i.test(s)) rim = 'semi';
+    else if (/ranurado|al aire/i.test(s)) rim = 'aire';
+    var isPropio = /propio/i.test(s);
+    var parts = s.split('·').map(function (p) { return p.trim(); });
+    var detail = parts.length >= 3 ? parts.slice(2).join(' · ') : '';
+    return {
+      frameModeSelect: isPropio ? 'propio' : ('nuevo_' + rim),
+      frame: { mode: isPropio ? 'propio' : 'nuevo', rimType: rim, detail: detail, price: isPropio ? 0 : price }
+    };
+  }
+
+  function reconstructEyeSel(nombre, tipo, precioRaw, uso, eyeRx, effPair, pairMode) {
+    var nom = String(nombre || '').trim();
+    var price = Math.max(0, Number(precioRaw) || 0);
+    if (!nom) return defaultQuoteEye();
+    var found = state.catalog.find(function (p) {
+      return normFilterText(p.nombre) === normFilterText(nom) &&
+        (!tipo || normFilterText(p.tipo) === normFilterText(tipo));
+    }) || state.catalog.find(function (p) {
+      return normFilterText(p.nombre) === normFilterText(nom);
+    });
+    if (found) {
+      var chk = (pairMode === 'both' && effPair)
+        ? Q.checkProductForPair(found, effPair.od, effPair.oi, uso)
+        : Q.checkProductForEye(found, eyeRx, uso, 1);
+      if (chk.allowed) {
+        return {
+          mode: 'catalog',
+          codigo: found.codigo,
+          price: price || found.precioMedioPar,
+          manual: defaultQuoteEye().manual
+        };
+      }
+    }
+    return {
+      mode: 'manual',
+      codigo: '',
+      price: price || (found ? found.precioMedioPar : 0),
+      manual: {
+        nombre: nom,
+        tipo: tipo || (found && found.tipo) || 'Stock',
+        diseno: (found && found.diseno) || Q.USO_TO_DISENO[uso] || 'Monofocal',
+        indice: (found && found.indice) || '1.50',
+        tratamiento: (found && found.tratamiento) || '',
+        saveToCatalog: false
+      }
+    };
+  }
+
+  async function loadExistingBudget(entry) {
+    loading(true, 'Cargando presupuesto anterior…');
+    try {
+      await ensureCatalog();
+      var fields = (window.Mock && window.Mock.mockFields) ? window.Mock.mockFields() : [];
+      var campos = {};
+      fields.forEach(function (f) {
+        var v = (entry.rx && entry.rx[f.key]) != null ? String(entry.rx[f.key]).trim() : '';
+        campos[f.key] = { valor: v || null, confianza: v ? 'alta' : 'baja' };
+      });
+
+      state.image = null;
+      state.existingFotoUrl = entry.fotoUrl || '';
+      state.originUuid = (entry.uuid && /^[0-9a-f-]{36}$/i.test(entry.uuid)) ? entry.uuid : null;
+      state.uuid = newUuid();
+      state.photoUploaded = Boolean(state.existingFotoUrl);
+      state.budgetIssued = false;
+      state.lastResult = null;
+      state.ocr = { fields: fields, rx: { es_receta_optica: true, campos: campos, anotaciones_extra: [] }, raw: '' };
+
+      renderReview();
+      state.extras = Array.isArray(entry.extras) ? entry.extras.map(function (txt) {
+        return { texto: txt, originalTexto: txt, ubicacion: 'presupuesto anterior', confianza: 'alta', decision: 'keep' };
+      }) : [];
+      renderExtras();
+
+      var form = $('#extra-form');
+      form.reset();
+      var em = entry.extraMap || {};
+      C.EXTRA_FIELDS.forEach(function (f) {
+        var el = form.elements[f.key];
+        if (el && em[f.key] !== undefined && em[f.key] !== null) el.value = String(em[f.key]);
+      });
+      syncConditionalFields();
+      state.prefilledName = em.nombre || entry.nombre || '';
+      state.prefilledDni = em.dni || entry.dni || '';
+
+      var rx = collectRx();
+      var opts = Array.isArray(entry.options) ? entry.options : [];
+      if (opts.length) {
+        var items = opts.map(function (o) {
+          var uso = o.uso || 'lejos';
+          var eyesMode = o.eyesMode || 'both';
+          var eff = Q.resolveEffectiveRx(rx, uso);
+          var od = eyesMode === 'oi' ? defaultQuoteEye() : reconstructEyeSel(o.odNombre, o.odTipo, o.odPrecio, uso, eff.od, eff, eyesMode);
+          var oi = eyesMode === 'od' ? defaultQuoteEye() : reconstructEyeSel(o.oiNombre, o.oiTipo, o.oiPrecio, uso, eff.oi, eff, eyesMode);
+          if (eyesMode === 'both') {
+            if (od.mode === 'manual' || od.codigo) oi = copyEyeState(od);
+            else if (oi.mode === 'manual' || oi.codigo) od = copyEyeState(oi);
+          }
+          var fr = parseFrameFromSheet(o.armazon, o.armazonPrecio);
+          return {
+            uso: uso,
+            eyesMode: eyesMode,
+            od: od,
+            oi: oi,
+            frameModeSelect: fr.frameModeSelect,
+            frame: fr.frame
+          };
+        });
+        var disc = parseDiscountFromSheet(opts[0].descuento);
+        state.quote = {
+          items: items,
+          discount: disc.amount,
+          discountNote: disc.note,
+          deposit: Math.max(0, Number(opts[0].sena) || 0)
+        };
+      } else {
+        state.quote = defaultQuoteState();
+        state.quote.items[0].uso = Q.inferDefaultUso(rx);
+      }
+      state.quoteInitialized = true;
+      startTimers();
+      $('#lookup-modal').hidden = true;
+      syncQuoteControls();
+      go('quote');
+      toast('Presupuesto anterior cargado. Al guardar se creará un nuevo registro.');
+    } finally {
+      loading(false);
+    }
+  }
+
+  function renderLookupResults(results, query) {
+    var root = $('#lookup-results');
+    root.innerHTML = '';
+    if (!results.length) {
+      root.innerHTML = '<p class="muted small">No se encontraron presupuestos para "' + esc(query) + '".</p>';
+      return;
+    }
+    results.forEach(function (entry) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'lookup-item';
+      var st = entry.estado || 'PRESUPUESTADO';
+      var optSummary = (entry.options || []).map(function (o, i) {
+        var grp = (entry.options.length > 1 ? 'G' + (i + 1) + ': ' : '') + (o.odNombre || o.oiNombre || o.uso || 'Ítem');
+        var tot = o.totalLista ? (' (' + Q.fmtMoney(o.totalLista) + ')') : '';
+        return grp + tot;
+      }).join(' · ');
+      btn.innerHTML =
+        '<div class="lookup-top">' +
+        '<span class="lookup-name">' + esc(entry.nombre || '—') + (entry.dni ? ' · DNI ' + esc(entry.dni) : '') + '</span>' +
+        '<span class="status-pill ' + statusClassFor(st) + '">' + esc(st) + '</span>' +
+        '</div>' +
+        '<div class="lookup-sub">Fecha: ' + esc(entry.fecha || '—') +
+        (optSummary ? '<br>' + esc(optSummary) : '<br>Sin ítems cotizados aún') + '</div>';
+      btn.addEventListener('click', function () { loadExistingBudget(entry); });
+      root.appendChild(btn);
+    });
+  }
+
+  function openLookupModal() {
+    $('#lookup-query').value = '';
+    setError('#lookup-error', '');
+    $('#lookup-results').innerHTML = '';
+    $('#lookup-modal').hidden = false;
+    $('#lookup-query').focus();
+  }
+
+  async function runLookupSearch(ev) {
+    ev.preventDefault();
+    var q = $('#lookup-query').value.trim();
+    if (q.length < 2) return setError('#lookup-error', 'Ingresá al menos 2 caracteres de Nombre o DNI.');
+    setError('#lookup-error', '');
+    $('#btn-lookup-submit').disabled = true;
+    $('#lookup-results').innerHTML = '<p class="muted small">Buscando en Sheets…</p>';
+    try {
+      var res = await withAuth(function (tok) { return Api.search(tok, q); });
+      renderLookupResults((res && res.results) || [], q);
+    } catch (e) {
+      $('#lookup-results').innerHTML = '';
+      setError('#lookup-error', e.message);
+    } finally {
+      $('#btn-lookup-submit').disabled = false;
+    }
+  }
+
+  // ---------- Anular / Abandonar Presupuesto ----------
+
+  function openAnnulModal() {
+    $('#annul-reason').value = '';
+    setError('#annul-error', '');
+    var hint = (state.originUuid && !state.budgetIssued)
+      ? 'Este presupuesto fue levantado del historial: se actualizará ese registro existente como ANULADO (sin crear uno nuevo).'
+      : 'Se guardará con estado ANULADO dejando el motivo registrado.';
+    $('#annul-hint').textContent = hint;
+    $('#annul-modal').hidden = false;
+    $('#annul-reason').focus();
+  }
+
+  async function submitAnnul(ev) {
+    ev.preventDefault();
+    var reasonEl = $('#annul-reason');
+    reasonEl.value = reasonEl.value.trim();
+    if (!$('#annul-form').reportValidity()) return;
+    setError('#annul-error', '');
+
+    if (state.inFlightSave) await state.inFlightSave;
+    markStep(stepKeyForScreen(state.screen));
+
+    var rxValues = collectRx();
+    var extraFields = collectExtraFields();
+    var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
+    var photoName = (nameField && nameField.value) || (rxValues.paciente || '').trim() || 'Pendiente';
+
+    var isUpdatingOrigin = Boolean(state.originUuid && !state.budgetIssued);
+    var targetUuid = isUpdatingOrigin ? state.originUuid : state.uuid;
+    var payload = {
+      uuid: targetUuid,
+      stage: 'anulado',
+      image: state.photoUploaded ? '' : (state.image || ''),
+      fotoUrl: state.existingFotoUrl || '',
+      isReflotado: Boolean(state.originUuid),
+      originUuid: isUpdatingOrigin ? '' : (state.originUuid || ''),
+      photoName: photoName,
+      closure: { motivo: reasonEl.value },
+      timings: buildTimingsPayload()
+    };
+    if (!isUpdatingOrigin) {
+      var snap = buildQuoteSnapshot();
+      var quoteItems = buildQuoteItemsList(snap, state.quote);
+      payload.rx = rxValues;
+      payload.extras = state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
+        .map(function (x) { return x.texto.trim(); });
+      payload.extraFields = extraFields;
+      payload.isRx = !(state.ocr && state.ocr.rx && state.ocr.rx.es_receta_optica === false);
+      payload.corrected = state.ocr ? wasCorrected(rxValues) : false;
+      payload.quoteItems = quoteItems;
+      payload.quoteSummary = quoteItems[0];
+    }
+
+    $('#btn-annul-confirm').disabled = true;
+    loading(true, 'Registrando anulación…');
+    try {
+      await withAuth(function (tok) { return Api.save(Object.assign({ idToken: tok }, payload)); });
+      $('#annul-modal').hidden = true;
+      clearDraft();
+      resetFlow();
+      go('capture');
+      toast('Presupuesto guardado como ANULADO.');
+    } catch (e) {
+      setError('#annul-error', e.message + ' (reintentá)');
+    } finally {
+      loading(false);
+      $('#btn-annul-confirm').disabled = false;
+    }
+  }
 
   function openAbandonModal() {
     $('#abandon-reason').value = '';
@@ -1696,7 +2199,10 @@
     var payload = {
       uuid: state.uuid,
       stage: 'abandonado',
-      image: state.photoUploaded ? '' : state.image,
+      image: state.photoUploaded ? '' : (state.image || ''),
+      fotoUrl: state.existingFotoUrl || '',
+      isReflotado: Boolean(state.originUuid),
+      originUuid: state.originUuid || '',
       photoName: photoName,
       rx: rxValues,
       extras: state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
@@ -1707,6 +2213,12 @@
       closure: { motivo: reasonEl.value },
       timings: buildTimingsPayload()
     };
+    if (state.quoteInitialized) {
+      var snap = buildQuoteSnapshot();
+      var quoteItems = buildQuoteItemsList(snap, state.quote);
+      payload.quoteItems = quoteItems;
+      payload.quoteSummary = quoteItems[0];
+    }
 
     $('#btn-abandon-confirm').disabled = true;
     loading(true, 'Guardando presupuesto abandonado…');
@@ -1732,7 +2244,10 @@
     state.extras = [];
     state.original = {};
     state.uuid = null;
+    state.originUuid = null;
+    state.existingFotoUrl = '';
     state.prefilledName = '';
+    state.prefilledDni = '';
     state.quoteInitialized = false;
     state.budgetIssued = false;
     state.photoUploaded = false;
@@ -1764,6 +2279,15 @@
     $('#btn-abandon').addEventListener('click', openAbandonModal);
     $('#btn-abandon-cancel').addEventListener('click', function () { $('#abandon-modal').hidden = true; });
     $('#abandon-form').addEventListener('submit', submitAbandon);
+
+    $('#btn-open-lookup').addEventListener('click', openLookupModal);
+    $('#btn-lookup-close').addEventListener('click', function () { $('#lookup-modal').hidden = true; });
+    $('#lookup-form').addEventListener('submit', runLookupSearch);
+
+    $('#btn-annul-quote').addEventListener('click', openAnnulModal);
+    $('#btn-annul-done').addEventListener('click', openAnnulModal);
+    $('#btn-annul-cancel').addEventListener('click', function () { $('#annul-modal').hidden = true; });
+    $('#annul-form').addEventListener('submit', submitAnnul);
 
     $('#in-camera').addEventListener('change', onFile);
     $('#in-file').addEventListener('change', onFile);
@@ -1797,25 +2321,28 @@
       if (blocks.length) blocks[blocks.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
 
-    $('#q-frame-mode').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); saveDraft(); });
-    $('#q-frame-rim').addEventListener('change', function () { syncFrameVisibility(); refreshQuotePreview(); saveDraft(); });
-    $('#q-frame-detail').addEventListener('input', function () { state.quote.frame.detail = $('#q-frame-detail').value; refreshQuotePreview(); saveDraft(); });
-    $('#q-frame-price').addEventListener('input', function () { state.quote.frame.price = Math.max(0, Number($('#q-frame-price').value) || 0); refreshQuotePreview(); saveDraft(); });
     $('#q-discount').addEventListener('input', function () { state.quote.discount = Math.max(0, Number($('#q-discount').value) || 0); refreshQuotePreview(); saveDraft(); });
     $('#q-discount-note').addEventListener('input', function () { state.quote.discountNote = $('#q-discount-note').value; refreshQuotePreview(); saveDraft(); });
     $('#q-deposit').addEventListener('input', function () { state.quote.deposit = Math.max(0, Number($('#q-deposit').value) || 0); refreshQuotePreview(); saveDraft(); });
 
     window.addEventListener('beforeunload', function (e) {
-      if (state.screen !== 'login' && (state.image || ['review', 'extra', 'quote', 'done'].indexOf(state.screen) >= 0)) {
+      if (state.screen !== 'login' && (state.image || state.existingFotoUrl || state.originUuid || ['review', 'extra', 'quote', 'done'].indexOf(state.screen) >= 0)) {
         saveDraft();
         e.preventDefault();
         e.returnValue = '';
       }
     });
+    document.addEventListener('click', function (e) {
+      var combo = e.target && e.target.closest ? e.target.closest('.combo') : null;
+      closeAllCombos(combo);
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         $('#zoom').hidden = true;
         $('#abandon-modal').hidden = true;
+        $('#lookup-modal').hidden = true;
+        $('#annul-modal').hidden = true;
+        closeAllCombos(null);
       }
     });
   }
