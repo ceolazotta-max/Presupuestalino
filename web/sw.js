@@ -1,4 +1,4 @@
-var CACHE = 'presupuestalino-v6';
+var CACHE = 'presupuestalino-v7';
 var ASSETS = [
   './',
   './index.html',
@@ -34,7 +34,7 @@ self.addEventListener('fetch', function (e) {
   if (req.method !== 'GET') return;
   if (new URL(req.url).origin !== self.location.origin) return;
   e.respondWith(
-    fetch(req).then(function (res) {
+    fetch(req, { cache: 'no-cache' }).then(function (res) {
       if (res && res.ok) {
         var copy = res.clone();
         caches.open(CACHE).then(function (c) { c.put(req, copy); });
