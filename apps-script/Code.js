@@ -25,7 +25,11 @@ var OCR_PROMPT = [
   'y ubicación aproximada (ej "margen inferior derecho").',
   'Ignorá códigos QR, códigos de barras, números administrativos/afiliado del formulario y textos legales del membrete.',
   'En "dni", extraé solo los números del DNI/documento del paciente si figura (sin puntos ni espacios); si no está o está tapado, null.',
+  'En "institucion", extraé el nombre de la clínica, hospital, sanatorio, policonsultorio u obra social emisora visible en el encabezado, membrete, logo o sello (ej "Clínica del Sol", "Policonsultorios Dean Funes", "PAMI"); si no figura o es ilegible, null.',
   'En "paciente" y "medico", formateá SIEMPRE como "Apellido Nombre" (primero apellido y luego nombre, en formato Título, sin comas ni prefijos Dr./Dra.).',
+  'En "matricula", extraé la Matrícula Profesional/Provincial o Nacional (M.P. / M.N.); en "matricula_esp", extraé la Matrícula de Especialista (M.E.) si figura en el sello o firma (ej si el sello dice "MP 31420 ME 15210", poné "MP 31420" en "matricula" y "ME 15210" en "matricula_esp"). Si alguna no está o está tapada, null.',
+  'En "ametropias", extraé diagnósticos refractivos o ametropías escritas/impresas en la receta si figuran (ej "Miopía", "Astigmatismo", "Hipermetropía", "Presbicia", "Alteraciones de la visión"); no las deduzcas si no están escritas.',
+  'En "tratamientos", extraé los tratamientos ópticos solicitados si figuran (ej "Antirreflejo", "AR", "Blue Cut", "Fotocromático", "Blanco").',
   'es_receta_optica = false si la imagen claramente no es una receta óptica.'
 ].join(' ');
 
@@ -64,6 +68,8 @@ function doPost(e) {
 
 function cfg_() {
   var p = PropertiesService.getScriptProperties().getProperties();
+  var rawTz = String(p.TIMEZONE || '').trim();
+  var tz = (!rawTz || /^(utc|gmt|etc\/utc)$/i.test(rawTz)) ? TZ_DEFAULT : rawTz;
   return {
     geminiKey: p.GEMINI_API_KEY || '',
     geminiModel: p.GEMINI_MODEL || 'gemini-flash-latest',
@@ -73,7 +79,7 @@ function cfg_() {
     sheetId: p.SHEET_ID || '',
     sheetName: p.SHEET_NAME || '',
     folderId: p.DRIVE_FOLDER_ID || '',
-    tz: p.TIMEZONE || TZ_DEFAULT,
+    tz: tz,
     rateOcr: Number(p.RATE_OCR_PER_HOUR || 30),
     rateSave: Number(p.RATE_SAVE_PER_HOUR || 120)
   };
@@ -161,11 +167,15 @@ function ensurePaymentSheet_(ss) {
   return ensureConfigSheet_(ss, 'Medios_Pago', PAYMENT_HEADERS, SEED_PAYMENT_ROWS);
 }
 
+function ensureConveniosSheet_(ss) {
+  return ensureConfigSheet_(ss, 'Convenios', CONVENIOS_HEADERS, SEED_CONVENIOS_ROWS);
+}
+
 function handleCatalog_(user) {
   var c = cfg_();
   if (!c.sheetId) throw httpError_(500, 'Falta SHEET_ID');
   var cache = CacheService.getScriptCache();
-  var cached = cache.get('catalog_bundle');
+  var cached = cache.get('catalog_bundle_v2');
   if (cached) return JSON.parse(cached);
 
   var lock = LockService.getScriptLock();
@@ -174,10 +184,12 @@ function handleCatalog_(user) {
     var ss = SpreadsheetApp.openById(c.sheetId);
     var catSheet = ensureCatalogSheet_(ss);
     var paySheet = ensurePaymentSheet_(ss);
+    var convSheet = ensureConveniosSheet_(ss);
     var items = parseCatalogRows(catSheet.getDataRange().getValues());
     var paymentConfig = parsePaymentRows(paySheet.getDataRange().getValues());
-    var out = { ok: true, items: items, paymentConfig: paymentConfig };
-    cache.put('catalog_bundle', JSON.stringify(out), 300);
+    var convenios = parseConveniosRows(convSheet.getDataRange().getValues());
+    var out = { ok: true, items: items, paymentConfig: paymentConfig, convenios: convenios };
+    cache.put('catalog_bundle_v2', JSON.stringify(out), 300);
     return out;
   } finally { lock.releaseLock(); }
 }
@@ -350,6 +362,10 @@ function writeRowWithHeaders_(sheet, targetRow, existingHeaders, record, baseRow
   range.setNumberFormat('General');
   range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
   range.setValues([built.row]);
+  ['Timestamp', 'Última actualización', 'Inicio Captura'].forEach(function (colName) {
+    var colIdx = built.headers.indexOf(colName);
+    if (colIdx >= 0) sheet.getRange(targetRow, colIdx + 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  });
   return built.headers;
 }
 
@@ -382,15 +398,16 @@ function buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel,
     var extras = Array.isArray(body.extras) ? body.extras.slice(0, 30).map(function (x) { return sanitizeCell(x, 300); }) : [];
     record.push(
       ['Anotaciones extra', sanitizeCell(extras.filter(Boolean).join('; '), 5000)],
-      ['Es receta (IA)', body.isRx === false ? 'No' : 'Sí'],
+      ['Es receta (IA)', body.isManualRx ? 'Manual' : (body.isRx === false ? 'No' : 'Sí')],
       ['Corregido por usuario', body.corrected ? 'Sí' : 'No']
     );
   }
 
   var cData = body.closure && typeof body.closure === 'object' ? body.closure : null;
-  if (cData) {
+  if (cData && !body.skipClosureBase) {
     record.push(
       ['Venta concretada', cData.sold === true ? 'Sí' : (cData.sold === false ? 'No' : '')],
+      ['Grupo Vendido', cData.sold === true ? 'Sí' : (cData.sold === false ? 'No' : '')],
       ['Número OT', sanitizeCell(cData.ot, 60)],
       ['Monto Venta', cData.monto !== '' && cData.monto != null ? toSheetValue(cData.monto, 30) : ''],
       ['Tipo Lente Vendido', sanitizeCell(cData.tipoLente, 120)],
@@ -401,7 +418,7 @@ function buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel,
   var tm = body.timings && typeof body.timings === 'object' ? body.timings : null;
   if (tm) {
     record.push(
-      ['Inicio Captura', sanitizeCell(tm.inicioIso, 40)],
+      ['Inicio Captura', sanitizeCell(formatArTimestamp(tm.inicioIso), 40)],
       ['Seg Paso 1 (OCR)', tm.paso1Sec != null ? toSheetValue(tm.paso1Sec, 20) : ''],
       ['Seg Paso 2 (Revisión)', tm.paso2Sec != null ? toSheetValue(tm.paso2Sec, 20) : ''],
       ['Seg Paso 3 (Datos)', tm.paso3Sec != null ? toSheetValue(tm.paso3Sec, 20) : ''],
@@ -446,6 +463,7 @@ function handleSearch_(user, body) {
 function pushQuoteRecordFields_(record, q, idx) {
   record.push(
     ['Opción #', toSheetValue(q.opcion || (idx + 1), 10)],
+    ['Grupo #', toSheetValue(q.grupo || (idx + 1), 10)],
     ['Uso anteojo', sanitizeCell(q.uso, 40)],
     ['Ojos cotizados', sanitizeCell(q.eyesMode, 40)],
     ['½ Par OD', sanitizeCell(q.odNombre, 140)],
@@ -454,7 +472,10 @@ function pushQuoteRecordFields_(record, q, idx) {
     ['½ Par OI', sanitizeCell(q.oiNombre, 140)],
     ['Tipo OI', sanitizeCell(q.oiTipo, 30)],
     ['Precio ½ OI', toSheetValue(q.oiPrecio, 30)],
-    ['Armazón', sanitizeCell(q.armazon, 140)],
+    ['Armazón', sanitizeCell(q.armazon, 180)],
+    ['Armazón Marca', sanitizeCell(q.armazonMarca, 80)],
+    ['Armazón Modelo', sanitizeCell(q.armazonModelo, 80)],
+    ['Armazón Color', sanitizeCell(q.armazonColor, 60)],
     ['Precio Armazón', toSheetValue(q.armazonPrecio, 30)],
     ['Descuento / OS', toSheetValue(q.descuento, 80)],
     ['Seña', toSheetValue(q.sena, 30)],
@@ -462,6 +483,46 @@ function pushQuoteRecordFields_(record, q, idx) {
     ['Total Efectivo (-10%)', toSheetValue(q.totalEfectivo, 30)],
     ['Plan Cristalino', sanitizeCell(q.planCristalino, 300)]
   );
+}
+
+function buildRowClosureOverrides_(cData, rowOptNum) {
+  if (!cData) return [];
+  if (cData.sold === true) {
+    var soldOpts = Array.isArray(cData.soldOptions) ? cData.soldOptions.map(Number) : [];
+    var isSoldOpt = soldOpts.length === 0 || soldOpts.indexOf(Number(rowOptNum)) >= 0;
+    if (isSoldOpt) {
+      return [
+        ['Estado', 'VENTA CONCRETADA'],
+        ['Venta concretada', 'Sí'],
+        ['Grupo Vendido', 'Sí'],
+        ['Número OT', sanitizeCell(cData.ot, 60)],
+        ['Monto Venta', cData.monto !== '' && cData.monto != null ? toSheetValue(cData.monto, 30) : ''],
+        ['Tipo Lente Vendido', sanitizeCell(cData.tipoLente, 120)],
+        ['Motivo No Venta / Abandono', '']
+      ];
+    }
+    return [
+      ['Estado', 'NO ELEGIDA'],
+      ['Venta concretada', 'No'],
+      ['Grupo Vendido', 'No'],
+      ['Número OT', ''],
+      ['Monto Venta', ''],
+      ['Tipo Lente Vendido', ''],
+      ['Motivo No Venta / Abandono', 'Otra opción del presupuesto fue elegida']
+    ];
+  }
+  if (cData.sold === false) {
+    return [
+      ['Estado', 'NO CONCRETADA'],
+      ['Venta concretada', 'No'],
+      ['Grupo Vendido', 'No'],
+      ['Número OT', ''],
+      ['Monto Venta', ''],
+      ['Tipo Lente Vendido', ''],
+      ['Motivo No Venta / Abandono', sanitizeCell(cData.motivo, 500)]
+    ];
+  }
+  return [];
 }
 
 function handleSave_(user, body) {
@@ -483,8 +544,8 @@ function handleSave_(user, body) {
     if (!sheet) throw httpError_(500, 'Hoja no encontrada');
 
     var now = new Date();
-    var nowStr = Utilities.formatDate(now, c.tz, 'yyyy-MM-dd HH:mm:ss');
-    var stamp = Utilities.formatDate(now, c.tz, 'yyyy-MM-dd_HHmmss');
+    var nowStr = formatArTimestamp(now);
+    var stamp = nowStr.slice(0, 10) + '_' + nowStr.slice(11).replace(/:/g, '');
 
     var lastCol = Math.max(sheet.getLastColumn(), 1);
     var existingHeaders = sheet.getLastRow() ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
@@ -501,7 +562,7 @@ function handleSave_(user, body) {
 
     if (!fotoUrl) {
       if (!img) {
-        if (body.isReflotado || stage === 'abandonado' || stage === 'anulado') {
+        if (body.isManualRx || body.isReflotado || stage === 'abandonado' || stage === 'anulado') {
           fotoUrl = '';
         } else {
           throw httpError_(400, 'Falta la imagen');
@@ -580,6 +641,7 @@ function handleSave_(user, body) {
       if (addedCat.length) {
         catSheet.getRange(catSheet.getLastRow() + 1, 1, addedCat.length, CATALOG_HEADERS.length).setValues(addedCat);
         cache.remove('catalog_bundle');
+        cache.remove('catalog_bundle_v2');
       }
     }
 
@@ -587,11 +649,16 @@ function handleSave_(user, body) {
       ? body.quoteItems
       : (body.quoteSummary && typeof body.quoteSummary === 'object' ? [body.quoteSummary] : []);
     var writtenRows = [];
+    var optCol = existingHeaders.indexOf('Opción #');
+    if (stage === 'cerrado' && cData) body.skipClosureBase = true;
 
     if (quoteList.length > 0) {
       for (var qi = 0; qi < quoteList.length; qi++) {
         var rowRecord = buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, !found);
         pushQuoteRecordFields_(rowRecord, quoteList[qi], qi);
+        if (stage === 'cerrado' && cData) {
+          rowRecord = rowRecord.concat(buildRowClosureOverrides_(cData, quoteList[qi].opcion || (qi + 1)));
+        }
         var isExisting = qi < foundRows.length;
         var targetRow = isExisting ? foundRows[qi] : (Math.max(sheet.getLastRow(), 1) + 1);
         var baseRow = isExisting
@@ -610,12 +677,19 @@ function handleSave_(user, body) {
         var rIdx = foundRows[fi];
         var curRow = sheet.getRange(rIdx, 1, 1, Math.max(sheet.getLastColumn(), existingHeaders.length, 1)).getValues()[0];
         var updRecord = buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, false);
+        if (stage === 'cerrado' && cData) {
+          var rowOptNum = (optCol >= 0 && curRow[optCol]) ? Number(curRow[optCol]) : (fi + 1);
+          updRecord = updRecord.concat(buildRowClosureOverrides_(cData, rowOptNum));
+        }
         existingHeaders = writeRowWithHeaders_(sheet, rIdx, existingHeaders, updRecord, curRow);
         writtenRows.push(rIdx);
       }
     } else {
       var newRowNum = Math.max(sheet.getLastRow(), 1) + 1;
       var insRecord = buildBaseRecord_(user, body, extraFields, fotoUrl, nowStr, statusLabel, true);
+      if (stage === 'cerrado' && cData) {
+        insRecord = insRecord.concat(buildRowClosureOverrides_(cData, 1));
+      }
       existingHeaders = writeRowWithHeaders_(sheet, newRowNum, existingHeaders, insRecord, []);
       writtenRows.push(newRowNum);
     }
@@ -735,6 +809,9 @@ function setupCheck() {
     var paySheet = ensurePaymentSheet_(ss);
     var payCfg = parsePaymentRows(paySheet.getDataRange().getValues());
     out.push('Medios_Pago: OK (' + payCfg.cardPlans.length + ' planes tarjeta, ' + payCfg.cristalinoPlans.length + ' planes Cristalino)');
+    var convSheet = ensureConveniosSheet_(ss);
+    var convList = parseConveniosRows(convSheet.getDataRange().getValues());
+    out.push('Convenios: OK (' + convList.length + ' convenios activos)');
   } catch (e) { out.push('Sheet/Catalogo: ERROR ' + e.message); }
   try { out.push('Carpeta: ' + DriveApp.getFolderById(c.folderId).getName()); } catch (e) { out.push('Carpeta: ERROR ' + e.message); }
   try {

@@ -10,8 +10,10 @@
       { key: 'paciente', label: 'Paciente', group: 'encabezado', type: 'text' },
       { key: 'dni', label: 'DNI paciente', group: 'encabezado', type: 'text' },
       { key: 'fecha_receta', label: 'Fecha receta', group: 'encabezado', type: 'date' },
+      { key: 'institucion', label: 'Institución', group: 'encabezado', type: 'text', required: true },
       { key: 'medico', label: 'Médico', group: 'encabezado', type: 'text' },
-      { key: 'matricula', label: 'Matrícula', group: 'encabezado', type: 'text' }
+      { key: 'matricula', label: 'Matrícula', group: 'encabezado', type: 'text' },
+      { key: 'matricula_esp', label: 'Matrícula Especialista (M.E.)', group: 'encabezado', type: 'text' }
     ];
     ['lejos', 'cerca'].forEach(function (dist) {
       ['od', 'oi'].forEach(function (eye) {
@@ -28,6 +30,7 @@
       { key: 'adicion', label: 'Adición', group: 'otros', type: 'adicion' },
       { key: 'dip', label: 'DIP', group: 'otros', type: 'dip' },
       { key: 'prisma', label: 'Prisma / base', group: 'otros', type: 'text' },
+      { key: 'ametropias', label: 'Ametropías', group: 'otros', type: 'text' },
       { key: 'tipo_lente', label: 'Tipo de lente', group: 'otros', type: 'text' },
       { key: 'tratamientos', label: 'Tratamientos', group: 'otros', type: 'text' },
       { key: 'observaciones', label: 'Observaciones', group: 'otros', type: 'longtext' }
@@ -42,8 +45,10 @@
       paciente: V('Juan Pérez', 'alta'),
       dni: V('30123456', 'media'),
       fecha_receta: V('12/11/2026', 'media'),
+      institucion: V('Clínica del Sol', 'alta'),
       medico: V('Dra. L. Fernández', 'media'),
       matricula: V('MN 45.120', 'baja'),
+      matricula_esp: V('ME 15.210', 'media'),
       lejos_od_esfera: V('-2.25', 'alta'), lejos_od_cilindro: V('-0.75', 'alta'), lejos_od_eje: V('180', 'media'),
       lejos_oi_esfera: V('-2.00', 'alta'), lejos_oi_cilindro: V('-0.50', 'media'), lejos_oi_eje: V('5', 'baja'),
       cerca_od_esfera: V(null, 'baja'), cerca_od_cilindro: V(null, 'baja'), cerca_od_eje: V(null, 'baja'),
@@ -51,6 +56,7 @@
       adicion: V('+1.75', 'alta'),
       dip: V('62', 'media'),
       prisma: V(null, 'baja'),
+      ametropias: V('Miopía y astigmatismo', 'media'),
       tipo_lente: V('Multifocal', 'media'),
       tratamientos: V('Antirreflejo', 'baja'),
       observaciones: V('Uso permanente', 'media')
@@ -80,24 +86,27 @@
       dni: '30123456',
       fotoUrl: '',
       rx: {
-        paciente: 'Pérez Juan', dni: '30123456', fecha_receta: '12/11/2026', medico: 'Fernández L.', matricula: 'MN 45.120',
+        paciente: 'Pérez Juan', dni: '30123456', fecha_receta: '12/11/2026', institucion: 'Clínica del Sol', medico: 'Fernández L.', matricula: 'MN 45.120', matricula_esp: 'ME 15.210',
         lejos_od_esfera: '-2.25', lejos_od_cilindro: '-0.75', lejos_od_eje: '180',
         lejos_oi_esfera: '-2.00', lejos_oi_cilindro: '-0.50', lejos_oi_eje: '5',
         cerca_od_esfera: '', cerca_od_cilindro: '', cerca_od_eje: '',
         cerca_oi_esfera: '', cerca_oi_cilindro: '', cerca_oi_eje: '',
-        adicion: '+1.75', dip: '62', prisma: '', tipo_lente: 'Multifocal', tratamientos: 'Antirreflejo', observaciones: 'Uso permanente'
+        adicion: '+1.75', dip: '62', prisma: '', ametropias: 'Miopía y astigmatismo', tipo_lente: 'Multifocal', tratamientos: 'Antirreflejo', observaciones: 'Uso permanente'
       },
       extras: ['llamar antes de entregar'],
       extraMap: {
         nombre: 'Pérez Juan', dni: '30123456', telefono: '3515550101', email: 'juan@ejemplo.com',
+        convenio: 'OSDE', convenio_otro: '',
         derivacion: 'Derivado por Secretaria', derivacion_doctor: '', derivacion_secretaria: 'Lucía',
         origen: 'Calle', origen_nombre: '', origen_red: '', notas: 'Demo vigente', vendedor: 'Gabriel'
       },
       options: [{
-        opcion: 1, uso: 'lejos', eyesMode: 'both',
+        opcion: 1, grupo: 1, uso: 'lejos', eyesMode: 'both',
         odNombre: 'Orgánico 1.50 Antirreflejo', odTipo: 'Stock', odPrecio: '26000',
         oiNombre: 'Orgánico 1.50 Antirreflejo', oiTipo: 'Stock', oiPrecio: '26000',
-        armazon: 'Armazón nuevo · Aro completo · Vulk negro', armazonPrecio: '45000',
+        armazon: 'Armazón nuevo · Aro completo · Vulk · V-210 · Negro mate',
+        armazonMarca: 'Vulk', armazonModelo: 'V-210', armazonColor: 'Negro mate',
+        armazonPrecio: '45000',
         descuento: '5000 (Promo)', sena: '10000', totalLista: '92000'
       }]
     },
@@ -109,24 +118,25 @@
       dni: '30123456',
       fotoUrl: '',
       rx: {
-        paciente: 'Pérez Juan', dni: '30123456', fecha_receta: '12/11/2026', medico: 'Fernández L.', matricula: 'MN 45.120',
+        paciente: 'Pérez Juan', dni: '30123456', fecha_receta: '12/11/2026', institucion: 'PAMI', medico: 'Fernández L.', matricula: 'MN 45.120', matricula_esp: '',
         lejos_od_esfera: '-2.25', lejos_od_cilindro: '-0.75', lejos_od_eje: '180',
         lejos_oi_esfera: '-2.00', lejos_oi_cilindro: '-0.50', lejos_oi_eje: '5',
         cerca_od_esfera: '', cerca_od_cilindro: '', cerca_od_eje: '',
         cerca_oi_esfera: '', cerca_oi_cilindro: '', cerca_oi_eje: '',
-        adicion: '+1.75', dip: '62', prisma: '', tipo_lente: 'Multifocal', tratamientos: 'Blue Cut', observaciones: ''
+        adicion: '+1.75', dip: '62', prisma: '', ametropias: 'Miopía', tipo_lente: 'Multifocal', tratamientos: 'Blue Cut', observaciones: ''
       },
       extras: [],
       extraMap: {
         nombre: 'Pérez Juan', dni: '30123456', telefono: '3515550101', email: 'juan@ejemplo.com',
+        convenio: 'PAMI', convenio_otro: '',
         derivacion: 'No Derivado', derivacion_doctor: '', derivacion_secretaria: '',
         origen: 'Calle', origen_nombre: '', origen_red: '', notas: '', vendedor: 'Micaela'
       },
       options: [{
-        opcion: 1, uso: 'lejos', eyesMode: 'both',
+        opcion: 1, grupo: 1, uso: 'lejos', eyesMode: 'both',
         odNombre: 'Orgánico 1.56 Blue Cut', odTipo: 'Stock', odPrecio: '34000',
         oiNombre: 'Orgánico 1.56 Blue Cut', oiTipo: 'Stock', oiPrecio: '34000',
-        armazon: '', armazonPrecio: '0',
+        armazon: '', armazonMarca: '', armazonModelo: '', armazonColor: '', armazonPrecio: '0',
         descuento: '0', sena: '0', totalLista: '68000'
       }]
     }
@@ -142,7 +152,8 @@
       var q = getQuoteMod();
       var base = q ? q.SEED_CATALOG : [];
       var payCfg = q ? q.DEFAULT_PAYMENT_CONFIG : null;
-      return { ok: true, items: base.concat(demoExtraCatalog), paymentConfig: payCfg };
+      var convenios = ['Sin convenio / Particular', 'PAMI', 'APROSS', 'OSDE', 'OSECAC'];
+      return { ok: true, items: base.concat(demoExtraCatalog), paymentConfig: payCfg, convenios: convenios };
     }
     if (payload.action === 'search') {
       await wait(150);
@@ -200,7 +211,7 @@
       } else if (payload.uuid) {
         var extraObj = {};
         (payload.extraFields || []).forEach(function (ef) {
-          var mapKey = { 'Nombre cliente': 'nombre', 'DNI': 'dni', 'Teléfono': 'telefono', 'Email cliente': 'email', 'Derivación': 'derivacion', 'Nombre Doctor': 'derivacion_doctor', 'Nombre Secretaria': 'derivacion_secretaria', 'Origen': 'origen', 'Nombre Recomendador': 'origen_nombre', 'Red Social': 'origen_red', 'Notas': 'notas', 'Vendedor': 'vendedor' }[ef.label];
+          var mapKey = { 'Nombre cliente': 'nombre', 'DNI': 'dni', 'Teléfono': 'telefono', 'Email cliente': 'email', 'Convenio': 'convenio', 'Cuál Convenio': 'convenio_otro', 'Derivación': 'derivacion', 'Nombre Doctor': 'derivacion_doctor', 'Nombre Secretaria': 'derivacion_secretaria', 'Origen': 'origen', 'Nombre Recomendador': 'origen_nombre', 'Red Social': 'origen_red', 'Notas': 'notas', 'Vendedor': 'vendedor' }[ef.label];
           if (mapKey) extraObj[mapKey] = String(ef.value || '');
         });
         demoBudgets.unshift({

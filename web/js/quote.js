@@ -359,6 +359,12 @@
     }
 
     var frame = quoteState.frame || {};
+    if (frame.mode === 'nuevo') {
+      if (!String(frame.marca || '').trim()) errors.push('Falta completar Marca del armazón.');
+      if (!String(frame.modelo || '').trim()) errors.push('Falta completar Modelo del armazón.');
+      if (!String(frame.color || '').trim()) errors.push('Falta completar Color del armazón.');
+      if (!(Number(frame.price) > 0)) errors.push('Falta precio válido para el armazón.');
+    }
     var rim = frame.rimType || 'completo';
     [
       { inc: includeOd, label: 'OD', prod: prodOd, eyeRx: eff.od },
@@ -465,6 +471,14 @@
     return '$ ' + Math.round(Number(n) || 0).toLocaleString('es-AR');
   }
 
+  function sortProductsByPriceDesc(list) {
+    return (list || []).slice().sort(function (a, b) {
+      var diff = (Number(b && b.precioMedioPar) || 0) - (Number(a && a.precioMedioPar) || 0);
+      if (diff !== 0) return diff;
+      return String((a && a.nombre) || '').localeCompare(String((b && b.nombre) || ''));
+    });
+  }
+
   var api = {
     TIER_RANK: TIER_RANK,
     SEED_CATALOG: SEED_CATALOG,
@@ -475,6 +489,7 @@
     fmtDiopter: fmtDiopter,
     fmtAxis: fmtAxis,
     fmtMoney: fmtMoney,
+    sortProductsByPriceDesc: sortProductsByPriceDesc,
     normalizeEyeRx: normalizeEyeRx,
     resolveEffectiveRx: resolveEffectiveRx,
     inferDefaultUso: inferDefaultUso,

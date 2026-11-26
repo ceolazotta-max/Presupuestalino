@@ -93,9 +93,13 @@ test('buildRow respeta encabezados existentes, agrega faltantes y preserva valor
 test('schema Gemini cubre todos los campos', () => {
   const f = L.buildRxFields();
   const s = L.buildRxSchema(f);
-  assert.equal(f.length, 23);
-  assert.equal(new Set(f.map((x) => x.key)).size, 23);
+  assert.equal(f.length, 26);
+  assert.equal(new Set(f.map((x) => x.key)).size, 26);
   assert.deepEqual(Object.keys(s.properties.campos.properties), f.map((x) => x.key));
+  const inst = f.find((x) => x.key === 'institucion');
+  assert.equal(inst.required, true);
+  assert.ok(f.some((x) => x.key === 'matricula_esp'));
+  assert.ok(f.some((x) => x.key === 'ametropias'));
 });
 
 test('isValidUuid / parseCsvList / sanitizeExtraFields', () => {
@@ -111,7 +115,7 @@ test('isValidUuid / parseCsvList / sanitizeExtraFields', () => {
     { label: 'Teléfonoscript', value: "'=1+1" },
     { label: '¿De dónde nos conoce?', value: 'Calle' }
   ]);
-  assert.equal(L.sanitizeExtraFields(new Array(50).fill({ label: 'a', value: 'b' })).length, 20);
+  assert.equal(L.sanitizeExtraFields(new Array(50).fill({ label: 'a', value: 'b' })).length, 30);
 });
 
 test('validateRxValue ópticos', () => {
@@ -137,7 +141,7 @@ test('mockFields coincide con buildRxFields de Logic.js', () => {
 test('Mock.handle simula ocr y save', async () => {
   const ocr = await Mock.handle({ action: 'ocr' });
   assert.equal(ocr.ok, true);
-  assert.equal(ocr.fields.length, 23);
+  assert.equal(ocr.fields.length, 26);
 
   const save = await Mock.handle({ action: 'save', photoName: 'María Gómez' });
   assert.equal(save.ok, true);
@@ -148,6 +152,7 @@ test('Mock.handle simula ocr y save', async () => {
   assert.equal(cat.ok, true);
   assert.equal(cat.items.length, Q.SEED_CATALOG.length);
   assert.equal(cat.paymentConfig.cashDiscountPct, 10);
+  assert.ok(Array.isArray(cat.convenios) && cat.convenios.includes('PAMI'));
 });
 
 test('Quote.normalizeEyeRx transpone cilindro positivo a negativo', () => {
@@ -206,7 +211,7 @@ test('Quote.validateQuote detecta bloqueos duros, regla ambos ojos y advertencia
     eyesMode: 'both',
     od: { mode: 'catalog', codigo: 'STK-150-BL', price: 18000 },
     oi: { mode: 'catalog', codigo: 'STK-150-AR', price: 26000 },
-    frame: { mode: 'nuevo', rimType: 'aire', price: 30000 }
+    frame: { mode: 'nuevo', rimType: 'aire', marca: 'Vulk', modelo: 'V-1', color: 'Negro', price: 30000 }
   };
   const v1 = Q.validateQuote(rx, badState, Q.SEED_CATALOG);
   assert.ok(v1.errors.some((e) => e.includes('OI:') && /Rango Extendido/i.test(e)));
@@ -323,7 +328,7 @@ test('Logic catálogo y medios de pago sincronizados con Quote', () => {
   assert.equal(totals.cardGroups[1].options[0].total, 110000);
 });
 
-test('Logic.normalizeOcrResult completa las 23 claves y normaliza anotaciones', () => {
+test('Logic.normalizeOcrResult completa las 26 claves y normaliza anotaciones', () => {
   const fields = L.buildRxFields();
   const norm = L.normalizeOcrResult({
     es_receta_optica: true,
@@ -338,7 +343,7 @@ test('Logic.normalizeOcrResult completa las 23 claves y normaliza anotaciones', 
     ]
   }, fields);
   assert.equal(norm.es_receta_optica, true);
-  assert.equal(Object.keys(norm.campos).length, 23);
+  assert.equal(Object.keys(norm.campos).length, 26);
   assert.deepEqual(norm.campos.lejos_od_esfera, { valor: '-2.00', confianza: 'alta' });
   assert.deepEqual(norm.campos.lejos_oi_esfera, { valor: '-1.50', confianza: 'media' });
   assert.deepEqual(norm.campos.lejos_od_cilindro, { valor: null, confianza: 'baja' });
@@ -559,4 +564,81 @@ test('Logic.searchBudgetsInSheetRows busca por nombre o DNI, agrupa UUID e inclu
   const mockRes = await Mock.handle({ action: 'search', query: '30123' });
   assert.equal(mockRes.ok, true);
   assert.ok(mockRes.results.length >= 2);
+});
+
+test('Nuevas reglas: Convenios, orden descendente de precio, Marca/Modelo/Color obligatorios, GMT-3 y Estado por grupo vendido', () => {
+  // 1) Convenios parser y sanitizeExtraFields
+  const convList = L.parseConveniosRows([
+    L.CONVENIOS_HEADERS,
+    ...L.SEED_CONVENIOS_ROWS,
+    ['Swiss Medical', 'Sí'],
+    ['Swiss Medical', 'Sí'],
+    ['Convenio Viejo', 'No'],
+    ['Otro', 'Sí']
+  ]);
+  assert.ok(convList.includes('PAMI'));
+  assert.ok(convList.includes('Swiss Medical'));
+  assert.ok(!convList.includes('Convenio Viejo'));
+  assert.ok(!convList.includes('Otro'));
+
+  const extConv = L.sanitizeExtraFields([
+    { key: 'convenio', label: 'Convenio', value: 'Otro' },
+    { key: 'convenio_otro', label: 'Cuál Convenio', value: 'osdepym plan 200' }
+  ]);
+  assert.deepEqual(extConv, [
+    { label: 'Convenio', value: 'Otro' },
+    { label: 'Cuál Convenio', value: 'osdepym plan 200' }
+  ]);
+
+  // 2) Cristales ordenados por precio descendente
+  const sorted = Q.sortProductsByPriceDesc(Q.SEED_CATALOG);
+  assert.equal(sorted[0].precioMedioPar, 105000);
+  assert.equal(sorted[sorted.length - 1].precioMedioPar, 18000);
+  for (let i = 1; i < sorted.length; i++) {
+    assert.ok(sorted[i - 1].precioMedioPar >= sorted[i].precioMedioPar);
+  }
+
+  // 3) Marca, Modelo y Color obligatorios solo en armazón nuevo
+  const rx = { lejos_od_esfera: '-1.00', lejos_oi_esfera: '-1.00' };
+  const missingFrame = Q.validateQuote(rx, {
+    uso: 'lejos',
+    eyesMode: 'both',
+    od: { mode: 'catalog', codigo: 'STK-150-AR', price: 26000 },
+    oi: { mode: 'catalog', codigo: 'STK-150-AR', price: 26000 },
+    frame: { mode: 'nuevo', rimType: 'completo', marca: '', modelo: '', color: '', price: 30000 }
+  }, Q.SEED_CATALOG);
+  assert.ok(missingFrame.errors.some((e) => e.includes('Marca')));
+  assert.ok(missingFrame.errors.some((e) => e.includes('Modelo')));
+  assert.ok(missingFrame.errors.some((e) => e.includes('Color')));
+
+  const ownFrame = Q.validateQuote(rx, {
+    uso: 'lejos',
+    eyesMode: 'both',
+    od: { mode: 'catalog', codigo: 'STK-150-AR', price: 26000 },
+    oi: { mode: 'catalog', codigo: 'STK-150-AR', price: 26000 },
+    frame: { mode: 'propio', rimType: 'completo', marca: '', modelo: '', color: '', price: 0 }
+  }, Q.SEED_CATALOG);
+  assert.equal(ownFrame.errors.length, 0);
+
+  // 4) Formato GMT-3 (UTC-3 Argentina)
+  assert.equal(L.formatArTimestamp('2026-11-25T18:25:30.575Z'), '2026-11-25 15:25:30');
+  assert.equal(L.formatArTimestamp('2026-11-25 15:36:04'), '2026-11-25 15:36:04');
+
+  // 5) Búsqueda conserva Convenio, Marca/Modelo/Color y prioriza VENTA CONCRETADA sobre NO ELEGIDA
+  const rows = [
+    ['Timestamp', 'Última actualización', 'UUID', 'Estado', 'Nombre cliente', 'DNI', 'Convenio', 'Cuál Convenio', 'Opción #', 'Grupo #', 'Uso anteojo', 'Ojos cotizados', '½ Par OD', 'Tipo OD', 'Precio ½ OD', 'Armazón', 'Armazón Marca', 'Armazón Modelo', 'Armazón Color', 'Precio Armazón', 'Grupo Vendido', 'Total Lista'],
+    ['2026-11-26 15:00:00', '2026-11-26 15:05:00', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'VENTA CONCRETADA', 'Gómez Lucía', 33444555, 'Otro', 'DASPU', 1, 1, 'lejos', 'both', 'Orgánico 1.50 Antirreflejo', 'Stock', 26000, 'Armazón nuevo · Aro completo · Ray-Ban · RB5154 · Habana', 'Ray-Ban', 'RB5154', 'Habana', 85000, 'Sí', 137000],
+    ['2026-11-26 15:00:00', '2026-11-26 15:05:00', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'NO ELEGIDA', 'Gómez Lucía', 33444555, 'Otro', 'DASPU', 2, 1, 'lejos', 'both', 'Orgánico 1.50 Antirreflejo', 'Stock', 26000, 'Armazón nuevo · Aro completo · Vulk · V-210 · Negro', 'Vulk', 'V-210', 'Negro', 45000, 'No', 97000]
+  ];
+  const found = L.searchBudgetsInSheetRows(rows, '33444');
+  assert.equal(found.length, 1);
+  assert.equal(found[0].estado, 'VENTA CONCRETADA');
+  assert.equal(found[0].extraMap.convenio, 'Otro');
+  assert.equal(found[0].extraMap.convenio_otro, 'DASPU');
+  assert.equal(found[0].options.length, 2);
+  assert.equal(found[0].options[0].grupo, 1);
+  assert.equal(found[0].options[0].armazonMarca, 'Ray-Ban');
+  assert.equal(found[0].options[1].armazonModelo, 'V-210');
+  assert.equal(found[0].options[0].grupoVendido, 'Sí');
+  assert.equal(found[0].options[1].grupoVendido, 'No');
 });

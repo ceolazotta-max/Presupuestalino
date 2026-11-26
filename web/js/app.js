@@ -17,30 +17,33 @@
     };
   }
 
-  function defaultFrameState() {
+  function defaultFrameEntry() {
     return {
       frameModeSelect: 'none',
-      frame: { mode: 'none', rimType: 'completo', detail: '', price: 0 }
+      mode: 'none',
+      rimType: 'completo',
+      marca: '',
+      modelo: '',
+      color: '',
+      price: 0
     };
   }
 
   function defaultQuoteItem(uso) {
-    var fr = defaultFrameState();
     return {
       uso: uso || 'lejos',
       eyesMode: 'both',
       od: defaultQuoteEye(),
       oi: defaultQuoteEye(),
-      frameModeSelect: fr.frameModeSelect,
-      frame: fr.frame
+      frames: [defaultFrameEntry()],
+      discount: 0,
+      discountNote: ''
     };
   }
 
   function defaultQuoteState() {
     return {
       items: [defaultQuoteItem('lejos')],
-      discount: 0,
-      discountNote: '',
       deposit: 0
     };
   }
@@ -51,41 +54,58 @@
     return e;
   }
 
-  function frameFromRaw(it, fallbackRaw) {
-    var srcFrame = (it && it.frame) || (fallbackRaw && fallbackRaw.frame) || {};
-    var fmSel = (it && it.frameModeSelect) || (fallbackRaw && fallbackRaw.frameModeSelect) || 'none';
+  function normalizeFrameEntry(rawFr) {
+    var f = rawFr || {};
+    var fmSel = f.frameModeSelect || (f.mode === 'propio' ? 'propio' : (f.mode === 'nuevo' ? ('nuevo_' + (f.rimType || 'completo')) : 'none'));
+    var mode = fmSel === 'none' ? 'none' : (fmSel === 'propio' ? 'propio' : 'nuevo');
+    var rim = mode === 'nuevo' ? fmSel.replace('nuevo_', '') : (f.rimType || 'completo');
+    var legacyDetail = String(f.detail || '').trim();
     return {
       frameModeSelect: fmSel,
-      frame: Object.assign({ mode: 'none', rimType: 'completo', detail: '', price: 0 }, srcFrame)
+      mode: mode,
+      rimType: rim || 'completo',
+      marca: String(f.marca || legacyDetail || '').trim(),
+      modelo: String(f.modelo || '').trim(),
+      color: String(f.color || '').trim(),
+      price: mode === 'nuevo' ? Math.max(0, Number(f.price) || 0) : 0
     };
+  }
+
+  function framesFromRawItem(it, fallbackRaw) {
+    if (it && Array.isArray(it.frames) && it.frames.length) {
+      return it.frames.map(normalizeFrameEntry);
+    }
+    var srcFrame = (it && it.frame) || (fallbackRaw && fallbackRaw.frame) || {};
+    var fmSel = (it && it.frameModeSelect) || (fallbackRaw && fallbackRaw.frameModeSelect) || srcFrame.frameModeSelect || 'none';
+    return [normalizeFrameEntry(Object.assign({}, srcFrame, { frameModeSelect: fmSel }))];
   }
 
   function normalizeQuoteState(raw) {
     var q = {
       items: [],
-      discount: Number(raw && raw.discount) || 0,
-      discountNote: String((raw && raw.discountNote) || ''),
       deposit: Number(raw && raw.deposit) || 0
     };
+    var legDisc = Number(raw && raw.discount) || 0;
+    var legNote = String((raw && raw.discountNote) || '');
     if (!raw || !Array.isArray(raw.items) || !raw.items.length) {
       var legacy = defaultQuoteItem((raw && raw.uso) || 'lejos');
       if (raw && raw.eyesMode) legacy.eyesMode = raw.eyesMode;
       if (raw && raw.od) legacy.od = normalizeQuoteEye(raw.od);
       if (raw && raw.oi) legacy.oi = normalizeQuoteEye(raw.oi);
-      var legFr = frameFromRaw(null, raw);
-      legacy.frameModeSelect = legFr.frameModeSelect;
-      legacy.frame = legFr.frame;
+      legacy.frames = framesFromRawItem(null, raw);
+      legacy.discount = legDisc;
+      legacy.discountNote = legNote;
       q.items = [legacy];
     } else {
       q.items = raw.items.map(function (it, idx) {
-        var fr = frameFromRaw(it, idx === 0 ? raw : null);
         return {
           uso: (it && it.uso) || 'lejos',
           eyesMode: (it && it.eyesMode) || 'both',
           od: normalizeQuoteEye(it && it.od),
           oi: normalizeQuoteEye(it && it.oi),
-          frameModeSelect: fr.frameModeSelect,
-          frame: fr.frame
+          frames: framesFromRawItem(it, idx === 0 ? raw : null),
+          discount: it && it.discount != null ? (Number(it.discount) || 0) : (idx === 0 ? legDisc : 0),
+          discountNote: it && it.discountNote != null ? String(it.discountNote) : (idx === 0 ? legNote : '')
         };
       });
     }
@@ -126,6 +146,7 @@
     auth: null,       // { token, email, exp }
     image: null,      // dataURL comprimido
     ocr: null,        // { fields, rx, raw }
+    isManualRx: false,
     original: {},     // key → valor devuelto por OCR
     extras: [],       // [{ texto, ubicacion, confianza, decision: null|'keep'|'discard', originalTexto }]
     uuid: null,
@@ -134,6 +155,7 @@
     prefilledName: '',
     prefilledDni: '',
     catalog: Q.SEED_CATALOG.slice(),
+    convenios: ['Sin convenio / Particular', 'PAMI', 'APROSS', 'OSDE', 'OSECAC'],
     paymentConfig: C.PAYMENT_CONFIG || Q.DEFAULT_PAYMENT_CONFIG,
     catalogLoaded: false,
     quoteInitialized: false,
@@ -149,12 +171,19 @@
 
   // ---------- Cronómetro & Borrador ----------
 
+  function formatArNow(ms) {
+    var ar = new Date((ms || Date.now()) - 3 * 3600000);
+    var p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return ar.getUTCFullYear() + '-' + p(ar.getUTCMonth() + 1) + '-' + p(ar.getUTCDate()) + ' ' +
+      p(ar.getUTCHours()) + ':' + p(ar.getUTCMinutes()) + ':' + p(ar.getUTCSeconds());
+  }
+
   function startTimers() {
     var now = Date.now();
     state.timers = {
       startMs: now,
       stepStartMs: now,
-      inicioIso: new Date(now).toISOString(),
+      inicioIso: formatArNow(now),
       paso1Sec: 0, paso2Sec: 0, paso3Sec: 0, paso4Sec: 0, cierreSec: 0
     };
   }
@@ -164,6 +193,12 @@
     var diff = Math.max(0, Math.round((Date.now() - state.timers.stepStartMs) / 1000));
     state.timers[key] = (state.timers[key] || 0) + diff;
     state.timers.stepStartMs = Date.now();
+  }
+
+  function flushActiveStepTimer() {
+    if (!state.timers.startMs || !state.timers.stepStartMs) return;
+    if (['capture', 'review', 'extra', 'quote', 'done'].indexOf(state.screen) < 0) return;
+    markStep(stepKeyForScreen(state.screen));
   }
 
   function stepKeyForScreen(scr) {
@@ -189,13 +224,14 @@
   }
 
   function saveDraft() {
-    if (!state.uuid || (!state.image && !state.existingFotoUrl && !state.originUuid) || !state.ocr) return;
+    if (!state.uuid || (!state.image && !state.existingFotoUrl && !state.originUuid && !state.isManualRx) || !state.ocr) return;
     if (['review', 'extra', 'quote', 'done'].indexOf(state.screen) < 0) return;
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         uuid: state.uuid,
         originUuid: state.originUuid,
         existingFotoUrl: state.existingFotoUrl,
+        isManualRx: state.isManualRx,
         image: state.image,
         ocr: state.ocr,
         rxValues: collectRx(),
@@ -224,10 +260,11 @@
     if (!raw) return false;
     try {
       var d = JSON.parse(raw);
-      if (!d || !d.uuid || (!d.image && !d.existingFotoUrl && !d.originUuid) || !d.ocr || ['review', 'extra', 'quote', 'done'].indexOf(d.screen) < 0) return false;
+      if (!d || !d.uuid || (!d.image && !d.existingFotoUrl && !d.originUuid && !d.isManualRx) || !d.ocr || ['review', 'extra', 'quote', 'done'].indexOf(d.screen) < 0) return false;
       state.uuid = d.uuid;
       state.originUuid = d.originUuid || null;
       state.existingFotoUrl = d.existingFotoUrl || '';
+      state.isManualRx = Boolean(d.isManualRx);
       state.image = d.image || null;
       state.ocr = d.ocr;
       state.prefilledName = d.prefilledName || '';
@@ -238,6 +275,9 @@
       state.photoUploaded = Boolean(d.photoUploaded);
       state.lastResult = d.lastResult || null;
       state.timers = Object.assign(defaultTimers(), d.timers || {});
+      if (state.timers.inicioIso && /^\d{4}-\d{2}-\d{2}T/.test(state.timers.inicioIso)) {
+        state.timers.inicioIso = formatArNow(new Date(state.timers.inicioIso).getTime());
+      }
       if (!state.timers.stepStartMs) state.timers.stepStartMs = Date.now();
 
       renderReview();
@@ -254,6 +294,7 @@
         renderExtras();
       }
       if (d.extraMap) {
+        syncConvenioSelectOptions(d.extraMap.convenio);
         var form = $('#extra-form');
         C.EXTRA_FIELDS.forEach(function (f) {
           var el = form.elements[f.key];
@@ -285,6 +326,7 @@
   var ORDER = ['capture', 'review', 'extra', 'quote', 'done'];
 
   function go(screen) {
+    if (state.screen !== screen) flushActiveStepTimer();
     state.screen = screen;
     document.querySelectorAll('.screen').forEach(function (s) { s.hidden = s.id !== 'screen-' + screen; });
     var steps = $('#steps');
@@ -393,6 +435,7 @@
     state.auth = a;
     $('#user').hidden = false;
     $('#user-email').textContent = a.email;
+    ensureCatalog({ silent: true });
   }
 
   function getToken() {
@@ -468,6 +511,7 @@
       clearDraft();
       state.image = await compressImage(file);
       state.ocr = null;
+      state.isManualRx = false;
       state.extras = [];
       state.original = {};
       state.uuid = newUuid();
@@ -512,6 +556,7 @@
     loading(true, 'Reconociendo receta… (puede tardar unos segundos)');
     try {
       var res = await withAuth(function (t) { return Api.ocr(t, state.image); });
+      state.isManualRx = false;
       state.ocr = res;
       markStep('paso1Sec');
       renderReview();
@@ -521,6 +566,30 @@
     } finally {
       loading(false);
     }
+  }
+
+  function startManualRx() {
+    resetFlow();
+    state.isManualRx = true;
+    state.uuid = newUuid();
+    startTimers();
+    var fields = (window.Mock && window.Mock.mockFields) ? window.Mock.mockFields() : [];
+    var campos = {};
+    fields.forEach(function (f) {
+      campos[f.key] = {
+        valor: f.key === 'institucion' ? 'Sin receta / Verbal' : null,
+        confianza: 'alta'
+      };
+    });
+    state.ocr = {
+      fields: fields,
+      rx: { es_receta_optica: true, campos: campos, anotaciones_extra: [] },
+      raw: ''
+    };
+    renderReview();
+    go('review');
+    var firstIn = $('#rx-form [data-key="paciente"]') || $('#rx-form [data-key]');
+    if (firstIn) firstIn.focus();
   }
 
   // ---------- Revisión ----------
@@ -538,7 +607,15 @@
       el.type = 'text';
       if (['esfera', 'cilindro', 'adicion'].indexOf(field.type) >= 0) el.inputMode = 'decimal';
       if (field.type === 'eje' || field.key === 'dni') el.inputMode = 'numeric';
-      if (field.key === 'dni') el.placeholder = '99.999.999';
+      var placeholders = {
+        dni: '99.999.999',
+        institucion: 'Ej. Clínica del Sol',
+        matricula: 'Ej. M.P. 31420',
+        matricula_esp: 'Ej. M.E. 15210',
+        ametropias: 'Ej. Miopía, astigmatismo',
+        tratamientos: 'Ej. Antirreflejo, Blue Cut'
+      };
+      if (placeholders[field.key]) el.placeholder = placeholders[field.key];
     }
     el.value = val;
     el.dataset.key = field.key;
@@ -589,6 +666,10 @@
     var pane = $('#screen-review .photo-pane');
     if (pane) pane.hidden = !state.image;
     if (state.image) $('#review-img').src = state.image;
+    $('#review-title').textContent = state.isManualRx ? 'Carga manual de receta' : 'Revisá y corregí';
+    $('#btn-close-manual-rx').hidden = !state.isManualRx;
+    $('#review-legend').hidden = Boolean(state.isManualRx);
+    $('#btn-back-capture').textContent = state.isManualRx ? '← Volver' : '← Otra foto';
     $('#not-rx-warning').hidden = rx.es_receta_optica !== false;
 
     var root = $('#rx-form');
@@ -632,6 +713,12 @@
           label.className = 'field' + (f.type === 'longtext' ? ' wide' : '');
           var span = document.createElement('span');
           span.textContent = f.label;
+          if (f.required) {
+            var req = document.createElement('b');
+            req.className = 'req';
+            req.textContent = ' *';
+            span.appendChild(req);
+          }
           label.appendChild(span);
           label.appendChild(makeInput(f, campos[f.key]));
           list.appendChild(label);
@@ -711,14 +798,29 @@
     return fieldsChanged || extrasChanged;
   }
 
+  var CLINICAL_RX_KEYS = [
+    'lejos_od_esfera', 'lejos_od_cilindro', 'lejos_od_eje',
+    'lejos_oi_esfera', 'lejos_oi_cilindro', 'lejos_oi_eje',
+    'cerca_od_esfera', 'cerca_od_cilindro', 'cerca_od_eje',
+    'cerca_oi_esfera', 'cerca_oi_cilindro', 'cerca_oi_eje',
+    'adicion', 'dip', 'prisma', 'ametropias', 'tipo_lente', 'tratamientos', 'observaciones'
+  ];
+
+  function hasAnyManualOpticalData(rxValues) {
+    var hasField = CLINICAL_RX_KEYS.some(function (k) { return Boolean((rxValues[k] || '').trim()); });
+    var hasExtra = state.extras.some(function (x) { return x.decision !== 'discard' && Boolean((x.texto || '').trim()); });
+    return hasField || hasExtra;
+  }
+
   function saveIncompleteInBackground(rxValues) {
     var paciente = (rxValues.paciente || '').trim();
     var payload = {
       uuid: state.uuid,
       stage: 'incompleto',
-      image: state.photoUploaded ? '' : state.image,
+      image: state.photoUploaded ? '' : (state.image || ''),
       fotoUrl: state.existingFotoUrl || '',
       isReflotado: Boolean(state.originUuid),
+      isManualRx: Boolean(state.isManualRx),
       originUuid: state.originUuid || '',
       photoName: paciente || 'Pendiente',
       rx: rxValues,
@@ -745,11 +847,24 @@
     state.inFlightSave = p;
   }
 
-  function toExtra() {
+  async function toExtra() {
     var pending = state.extras.filter(function (x) { return !x.decision; }).length;
     if (pending) {
       setError('#review-error', 'Decidí Guardar o Descartar en ' + pending + ' anotación(es) extra.');
       $('#extras-list .pending').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    var rxValues = collectRx();
+    if (!(rxValues.institucion || '').trim()) {
+      setError('#review-error', 'Completá el campo obligatorio Institución.');
+      var instEl = $('#rx-form [data-key="institucion"]');
+      if (instEl) instEl.focus();
+      return;
+    }
+    if (state.isManualRx && !hasAnyManualOpticalData(rxValues)) {
+      setError('#review-error', 'Ingresá al menos un dato óptico de la receta (graduación, adición, ametropía, lente o tratamiento) para continuar.');
+      var esfEl = $('#rx-form [data-key="lejos_od_esfera"]');
+      if (esfEl) esfEl.focus();
       return;
     }
     var warns = document.querySelectorAll('#rx-form .invalid').length;
@@ -757,7 +872,8 @@
     setError('#review-error', '');
 
     markStep('paso2Sec');
-    var rxValues = collectRx();
+    await ensureCatalog();
+    syncConvenioSelectOptions();
     var paciente = (rxValues.paciente || '').trim();
     var nameInput = $('#extra-form').elements[C.PHOTO_NAME_FIELD];
     if (nameInput && paciente && (!nameInput.value.trim() || nameInput.value === state.prefilledName)) {
@@ -877,18 +993,43 @@
     return out;
   }
 
-  async function ensureCatalog() {
+  function syncConvenioSelectOptions(preserveValue) {
+    var sel = $('#extra-form') && $('#extra-form').elements.convenio;
+    if (!sel) return;
+    var cur = preserveValue !== undefined ? String(preserveValue || '') : sel.value;
+    var baseList = Array.isArray(state.convenios) && state.convenios.length
+      ? state.convenios.filter(function (c) { return c && !/^otro$/i.test(c); })
+      : ['Sin convenio / Particular', 'PAMI', 'APROSS', 'OSDE', 'OSECAC'];
+    if (cur && !/^otro$/i.test(cur) && baseList.indexOf(cur) < 0) baseList.push(cur);
+    var opts = [''].concat(baseList).concat(['Otro']);
+    sel.innerHTML = '';
+    opts.forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o;
+      opt.textContent = o || '— Elegir —';
+      sel.appendChild(opt);
+    });
+    if (cur) sel.value = cur;
+    syncConditionalFields();
+  }
+
+  async function ensureCatalog(opts) {
     if (state.catalogLoaded) return;
-    loading(true, 'Cargando catálogo y medios de pago…');
+    var silent = Boolean(opts && opts.silent);
+    if (!silent) loading(true, 'Cargando catálogo y medios de pago…');
     try {
       var res = await withAuth(function (t) { return Api.catalog(t); });
       if (res && Array.isArray(res.items) && res.items.length) state.catalog = res.items;
       if (res && res.paymentConfig) state.paymentConfig = res.paymentConfig;
+      if (res && Array.isArray(res.convenios) && res.convenios.length) {
+        state.convenios = res.convenios;
+        syncConvenioSelectOptions();
+      }
       state.catalogLoaded = true;
     } catch (e) {
-      toast('Usando catálogo base local (' + e.message + ')');
+      if (!silent) toast('Usando catálogo base local (' + e.message + ')');
     } finally {
-      loading(false);
+      if (!silent) loading(false);
     }
   }
 
@@ -1088,28 +1229,41 @@
         '</div>' +
         '<div class="eyes-grid">' + createEyeCardHtml('od') + createEyeCardHtml('oi') + '</div>' +
         '<div class="item-frame-box">' +
-        '<h4>Armazón del grupo ' + (idx + 1) + '</h4>' +
+        '<h4>Armazones del grupo ' + (idx + 1) + '</h4>' +
+        '<div class="frames-list" data-role="frames-list"></div>' +
+        '<button class="btn ghost small" type="button" data-role="add-frame">+ Agregar otro armazón a este grupo</button>' +
+        '</div>' +
+        '<div class="item-discount-box">' +
+        '<h4>Descuento del grupo ' + (idx + 1) + '</h4>' +
         '<div class="rx-list">' +
-        '<label class="field"><span>Armazón</span><select data-role="frame-mode">' +
-        '<option value="none">Sin armazón / Solo cristales</option>' +
-        '<option value="propio">Armazón propio del cliente</option>' +
-        '<option value="nuevo_completo">Armazón nuevo — Aro completo</option>' +
-        '<option value="nuevo_semi">Armazón nuevo — Semi al aire (Tanza)</option>' +
-        '<option value="nuevo_aire">Armazón nuevo — Ranurado / Al aire</option>' +
-        '</select></label>' +
-        '<label class="field" data-role="frame-rim-wrap" hidden><span>Tipo de aro (propio)</span><select data-role="frame-rim">' +
-        '<option value="completo">Aro completo</option>' +
-        '<option value="semi">Semi al aire (Tanza)</option>' +
-        '<option value="aire">Ranurado / Al aire</option>' +
-        '</select></label>' +
-        '<label class="field" data-role="frame-detail-wrap" hidden><span>Modelo / Detalle armazón</span><input type="text" maxlength="100" data-role="frame-detail" placeholder="Ej. Vulk negro acetato"></label>' +
-        '<label class="field" data-role="frame-price-wrap" hidden><span>Precio armazón ($)</span><input type="number" min="0" step="100" inputmode="numeric" data-role="frame-price" value="0"></label>' +
+        '<label class="field"><span>Descuento / Obra Social ($)</span><input type="number" min="0" step="100" inputmode="numeric" data-role="item-discount" value="0"></label>' +
+        '<label class="field"><span>Detalle descuento / OS</span><input type="text" maxlength="60" data-role="item-discount-note" placeholder="Ej. OSDE 310 / Promo"></label>' +
         '</div></div>';
 
       block.querySelector('[data-role="remove"]').addEventListener('click', function () {
         if (state.quote.items.length <= 1) return;
         state.quote.items.splice(idx, 1);
         syncQuoteControls();
+        saveDraft();
+      });
+      block.querySelector('[data-role="add-frame"]').addEventListener('click', function () {
+        var item = state.quote.items[idx];
+        var nextFr = defaultFrameEntry();
+        nextFr.frameModeSelect = 'nuevo_completo';
+        nextFr.mode = 'nuevo';
+        nextFr.rimType = 'completo';
+        item.frames.push(nextFr);
+        syncQuoteControls();
+        saveDraft();
+      });
+      block.querySelector('[data-role="item-discount"]').addEventListener('input', function (e) {
+        state.quote.items[idx].discount = Math.max(0, Number(e.target.value) || 0);
+        refreshQuotePreview();
+        saveDraft();
+      });
+      block.querySelector('[data-role="item-discount-note"]').addEventListener('input', function (e) {
+        state.quote.items[idx].discountNote = e.target.value;
+        refreshQuotePreview();
         saveDraft();
       });
       block.querySelector('[data-role="uso"]').addEventListener('change', function (e) {
@@ -1187,27 +1341,6 @@
         });
       });
 
-      block.querySelector('[data-role="frame-mode"]').addEventListener('change', function () {
-        syncBlockFrameVisibility(block, state.quote.items[idx]);
-        refreshQuotePreview();
-        saveDraft();
-      });
-      block.querySelector('[data-role="frame-rim"]').addEventListener('change', function () {
-        syncBlockFrameVisibility(block, state.quote.items[idx]);
-        refreshQuotePreview();
-        saveDraft();
-      });
-      block.querySelector('[data-role="frame-detail"]').addEventListener('input', function (e) {
-        state.quote.items[idx].frame.detail = e.target.value;
-        refreshQuotePreview();
-        saveDraft();
-      });
-      block.querySelector('[data-role="frame-price"]').addEventListener('input', function (e) {
-        state.quote.items[idx].frame.price = Math.max(0, Number(e.target.value) || 0);
-        refreshQuotePreview();
-        saveDraft();
-      });
-
       root.appendChild(block);
     });
   }
@@ -1266,7 +1399,7 @@
       allowed.push(p);
       if (sel.mode === 'catalog' && sel.codigo === p.codigo) stillValid = true;
     });
-    card._allowedProducts = allowed;
+    card._allowedProducts = Q.sortProductsByPriceDesc(allowed);
 
     if (sel.mode === 'catalog' && !stillValid) {
       sel.codigo = '';
@@ -1281,26 +1414,122 @@
     syncEyeManualDom(card, sel, uso, reqRank);
   }
 
-  function syncBlockFrameVisibility(block, item) {
-    var fmSel = block.querySelector('[data-role="frame-mode"]');
-    var rimSel = block.querySelector('[data-role="frame-rim"]');
+  function syncFrameCardVisibility(fCard, frame) {
+    var fmSel = fCard.querySelector('[data-role="frame-mode"]');
+    var rimSel = fCard.querySelector('[data-role="frame-rim"]');
     var fm = fmSel.value;
-    item.frameModeSelect = fm;
+    frame.frameModeSelect = fm;
     if (fm === 'none') {
-      item.frame.mode = 'none';
-      item.frame.rimType = 'completo';
-      item.frame.price = 0;
+      frame.mode = 'none';
+      frame.rimType = 'completo';
+      frame.price = 0;
     } else if (fm === 'propio') {
-      item.frame.mode = 'propio';
-      item.frame.rimType = rimSel.value || 'completo';
-      item.frame.price = 0;
+      frame.mode = 'propio';
+      frame.rimType = rimSel.value || 'completo';
+      frame.price = 0;
     } else {
-      item.frame.mode = 'nuevo';
-      item.frame.rimType = fm.replace('nuevo_', '');
+      frame.mode = 'nuevo';
+      frame.rimType = fm.replace('nuevo_', '');
     }
-    block.querySelector('[data-role="frame-rim-wrap"]').hidden = fm !== 'propio';
-    block.querySelector('[data-role="frame-detail-wrap"]').hidden = fm === 'none';
-    block.querySelector('[data-role="frame-price-wrap"]').hidden = item.frame.mode !== 'nuevo';
+    var isNew = frame.mode === 'nuevo';
+    var showMeta = fm !== 'none';
+    fCard.querySelector('[data-role="frame-rim-wrap"]').hidden = fm !== 'propio';
+    fCard.querySelector('[data-role="frame-marca-wrap"]').hidden = !showMeta;
+    fCard.querySelector('[data-role="frame-modelo-wrap"]').hidden = !showMeta;
+    fCard.querySelector('[data-role="frame-color-wrap"]').hidden = !showMeta;
+    fCard.querySelector('[data-role="frame-price-wrap"]').hidden = !isNew;
+    fCard.querySelectorAll('[data-role="frame-req-mark"]').forEach(function (b) { b.hidden = !isNew; });
+  }
+
+  function renderItemFrames(block, item) {
+    if (!Array.isArray(item.frames) || !item.frames.length) item.frames = [defaultFrameEntry()];
+    var listEl = block.querySelector('[data-role="frames-list"]');
+    if (listEl.children.length !== item.frames.length) {
+      listEl.innerHTML = '';
+      item.frames.forEach(function (_, fIdx) {
+        var card = document.createElement('div');
+        card.className = 'frame-variant-card';
+        card.dataset.frameIdx = String(fIdx);
+        card.innerHTML =
+          '<div class="frame-variant-head">' +
+          '<span data-role="frame-title">Armazón ' + (fIdx + 1) + '</span>' +
+          '<button class="btn ghost btn-remove-item" type="button" data-role="remove-frame">✕ Quitar</button>' +
+          '</div>' +
+          '<div class="rx-list">' +
+          '<label class="field"><span>Armazón</span><select data-role="frame-mode">' +
+          '<option value="none">Sin armazón / Solo cristales</option>' +
+          '<option value="propio">Armazón propio del cliente</option>' +
+          '<option value="nuevo_completo">Armazón nuevo — Aro completo</option>' +
+          '<option value="nuevo_semi">Armazón nuevo — Semi al aire (Tanza)</option>' +
+          '<option value="nuevo_aire">Armazón nuevo — Ranurado / Al aire</option>' +
+          '</select></label>' +
+          '<label class="field" data-role="frame-rim-wrap" hidden><span>Tipo de aro (propio)</span><select data-role="frame-rim">' +
+          '<option value="completo">Aro completo</option>' +
+          '<option value="semi">Semi al aire (Tanza)</option>' +
+          '<option value="aire">Ranurado / Al aire</option>' +
+          '</select></label>' +
+          '<label class="field" data-role="frame-marca-wrap" hidden><span>Marca<b class="req" data-role="frame-req-mark"> *</b></span><input type="text" maxlength="60" data-role="frame-marca" placeholder="Ej. Vulk"></label>' +
+          '<label class="field" data-role="frame-modelo-wrap" hidden><span>Modelo<b class="req" data-role="frame-req-mark"> *</b></span><input type="text" maxlength="60" data-role="frame-modelo" placeholder="Ej. V-210"></label>' +
+          '<label class="field" data-role="frame-color-wrap" hidden><span>Color<b class="req" data-role="frame-req-mark"> *</b></span><input type="text" maxlength="40" data-role="frame-color" placeholder="Ej. Negro mate"></label>' +
+          '<label class="field" data-role="frame-price-wrap" hidden><span>Precio armazón ($)</span><input type="number" min="0" step="100" inputmode="numeric" data-role="frame-price" value="0"></label>' +
+          '</div>';
+
+        card.querySelector('[data-role="remove-frame"]').addEventListener('click', function () {
+          if (item.frames.length <= 1) return;
+          item.frames.splice(fIdx, 1);
+          syncQuoteControls();
+          saveDraft();
+        });
+        card.querySelector('[data-role="frame-mode"]').addEventListener('change', function () {
+          syncFrameCardVisibility(card, item.frames[fIdx]);
+          refreshQuotePreview();
+          saveDraft();
+        });
+        card.querySelector('[data-role="frame-rim"]').addEventListener('change', function () {
+          syncFrameCardVisibility(card, item.frames[fIdx]);
+          refreshQuotePreview();
+          saveDraft();
+        });
+        card.querySelector('[data-role="frame-marca"]').addEventListener('input', function (e) {
+          item.frames[fIdx].marca = e.target.value;
+          refreshQuotePreview();
+          saveDraft();
+        });
+        card.querySelector('[data-role="frame-modelo"]').addEventListener('input', function (e) {
+          item.frames[fIdx].modelo = e.target.value;
+          refreshQuotePreview();
+          saveDraft();
+        });
+        card.querySelector('[data-role="frame-color"]').addEventListener('input', function (e) {
+          item.frames[fIdx].color = e.target.value;
+          refreshQuotePreview();
+          saveDraft();
+        });
+        card.querySelector('[data-role="frame-price"]').addEventListener('input', function (e) {
+          item.frames[fIdx].price = Math.max(0, Number(e.target.value) || 0);
+          refreshQuotePreview();
+          saveDraft();
+        });
+        listEl.appendChild(card);
+      });
+    }
+    var multiFr = item.frames.length > 1;
+    item.frames.forEach(function (fr, fIdx) {
+      var fCard = listEl.children[fIdx];
+      fCard.querySelector('[data-role="frame-title"]').textContent = multiFr ? ('Opción armazón ' + (fIdx + 1)) : 'Armazón';
+      fCard.querySelector('[data-role="remove-frame"]').hidden = !multiFr;
+      fCard.querySelector('[data-role="frame-mode"]').value = fr.frameModeSelect || 'none';
+      fCard.querySelector('[data-role="frame-rim"]').value = fr.rimType || 'completo';
+      var marcaIn = fCard.querySelector('[data-role="frame-marca"]');
+      if (document.activeElement !== marcaIn) marcaIn.value = fr.marca || '';
+      var modeloIn = fCard.querySelector('[data-role="frame-modelo"]');
+      if (document.activeElement !== modeloIn) modeloIn.value = fr.modelo || '';
+      var colorIn = fCard.querySelector('[data-role="frame-color"]');
+      if (document.activeElement !== colorIn) colorIn.value = fr.color || '';
+      var priceIn = fCard.querySelector('[data-role="frame-price"]');
+      if (document.activeElement !== priceIn) priceIn.value = String(fr.price || 0);
+      syncFrameCardVisibility(fCard, fr);
+    });
   }
 
   function syncQuoteControls() {
@@ -1324,15 +1553,13 @@
       syncEyeCard(block, item, 'od', eff.od, item.eyesMode === 'both' ? pairMinRank : tOd, eff);
       syncEyeCard(block, item, 'oi', eff.oi, item.eyesMode === 'both' ? pairMinRank : tOi, eff);
 
-      block.querySelector('[data-role="frame-mode"]').value = item.frameModeSelect || 'none';
-      block.querySelector('[data-role="frame-rim"]').value = (item.frame && item.frame.rimType) || 'completo';
-      block.querySelector('[data-role="frame-detail"]').value = (item.frame && item.frame.detail) || '';
-      block.querySelector('[data-role="frame-price"]').value = String((item.frame && item.frame.price) || 0);
-      syncBlockFrameVisibility(block, item);
+      renderItemFrames(block, item);
+      var discIn = block.querySelector('[data-role="item-discount"]');
+      if (document.activeElement !== discIn) discIn.value = String(item.discount || 0);
+      var discNoteIn = block.querySelector('[data-role="item-discount-note"]');
+      if (document.activeElement !== discNoteIn) discNoteIn.value = item.discountNote || '';
     });
 
-    $('#q-discount').value = String(q.discount || 0);
-    $('#q-discount-note').value = q.discountNote || '';
     $('#q-deposit').value = String(q.deposit || 0);
     $('#btn-to-close').hidden = !state.budgetIssued;
     refreshQuotePreview();
@@ -1398,14 +1625,23 @@
     saveDraft();
   }
 
-  function frameSummaryText(frame) {
-    var f = frame || { mode: 'none', rimType: 'completo', detail: '' };
+  function internalFrameSummaryText(frame) {
+    var f = frame || defaultFrameEntry();
     if (f.mode === 'none') return 'Sin armazón (solo cristales)';
     var rimMap = { completo: 'Aro completo', semi: 'Semi al aire (Tanza)', aire: 'Ranurado / Al aire' };
     var tag = f.mode === 'propio' ? 'Propio del cliente' : 'Armazón nuevo';
     var parts = [tag, rimMap[f.rimType] || ''];
-    if (String(f.detail || '').trim()) parts.push(String(f.detail).trim());
+    if (String(f.marca || '').trim()) parts.push(String(f.marca).trim());
+    if (String(f.modelo || '').trim()) parts.push(String(f.modelo).trim());
+    if (String(f.color || '').trim()) parts.push(String(f.color).trim());
     return parts.filter(Boolean).join(' · ');
+  }
+
+  function clientFrameLabel(frame) {
+    var f = frame || defaultFrameEntry();
+    if (f.mode === 'propio') return 'Armazón propio';
+    if (f.mode === 'nuevo') return 'Armazón de marca';
+    return '';
   }
 
   function describeEyeItem(prod) {
@@ -1413,15 +1649,15 @@
     return prod.nombre + ' [' + prod.tipo + (prod.indice ? ' · ' + prod.indice : '') + (prod.tratamiento ? ' · ' + prod.tratamiento : '') + ']';
   }
 
-  function optionToQuoteInput(item, q) {
+  function optionToQuoteInput(item, frame, q) {
     return {
       uso: item.uso,
       eyesMode: item.eyesMode,
       od: item.od,
       oi: item.oi,
-      frame: item.frame || { mode: 'none', rimType: 'completo', detail: '', price: 0 },
-      discount: q.discount,
-      deposit: q.deposit
+      frame: frame || defaultFrameEntry(),
+      discount: Number(item.discount) || 0,
+      deposit: Number(q.deposit) || 0
     };
   }
 
@@ -1429,22 +1665,49 @@
     var rx = collectRx();
     var extra = getExtraMap();
     var q = state.quote;
-    var multi = q.items.length > 1;
+    var multiGroups = q.items.length > 1;
     var allErrors = [];
     var allWarnings = [];
+    var seenErr = {};
+    var seenWarn = {};
     var payCfg = state.paymentConfig || C.PAYMENT_CONFIG;
+    var optionSnapshots = [];
 
-    var optionSnapshots = q.items.map(function (item, idx) {
-      var singleQ = optionToQuoteInput(item, q);
+    q.items.forEach(function (item, itemIdx) {
+      var frames = (Array.isArray(item.frames) && item.frames.length) ? item.frames : [defaultFrameEntry()];
       var eff = Q.resolveEffectiveRx(rx, item.uso);
-      var validation = Q.validateQuote(rx, singleQ, state.catalog);
-      var totals = Q.calculateTotals(singleQ, payCfg);
       var prodOd = item.eyesMode !== 'oi' ? Q.resolveEyeProduct(item.od, state.catalog) : null;
       var prodOi = item.eyesMode !== 'od' ? Q.resolveEyeProduct(item.oi, state.catalog) : null;
-      var prefix = multi ? ('Grupo ' + (idx + 1) + ': ') : '';
-      validation.errors.forEach(function (msg) { allErrors.push(prefix + msg); });
-      validation.warnings.forEach(function (msg) { allWarnings.push(prefix + msg); });
-      return { item: item, eff: eff, validation: validation, totals: totals, prodOd: prodOd, prodOi: prodOi };
+
+      frames.forEach(function (fr, frIdx) {
+        var singleQ = optionToQuoteInput(item, fr, q);
+        var validation = Q.validateQuote(rx, singleQ, state.catalog);
+        var totals = Q.calculateTotals(singleQ, payCfg);
+        var prefix = '';
+        if (multiGroups || frames.length > 1) {
+          prefix = 'Grupo ' + (itemIdx + 1) + (frames.length > 1 ? ' (Armazón ' + (frIdx + 1) + ')' : '') + ': ';
+        }
+        validation.errors.forEach(function (msg) {
+          var full = prefix + msg;
+          if (!seenErr[full]) { seenErr[full] = true; allErrors.push(full); }
+        });
+        validation.warnings.forEach(function (msg) {
+          var full = prefix + msg;
+          if (!seenWarn[full]) { seenWarn[full] = true; allWarnings.push(full); }
+        });
+        optionSnapshots.push({
+          item: item,
+          frame: fr,
+          groupNum: itemIdx + 1,
+          frameNum: frIdx + 1,
+          framesInGroup: frames.length,
+          eff: eff,
+          validation: validation,
+          totals: totals,
+          prodOd: prodOd,
+          prodOi: prodOi
+        });
+      });
     });
 
     var now = new Date();
@@ -1459,18 +1722,19 @@
     };
   }
 
-  function buildOptionLines(opt, q) {
+  function buildOptionLines(opt) {
     var it = opt.item;
-    var fr = it.frame || { mode: 'none', rimType: 'completo', detail: '', price: 0 };
+    var fr = opt.frame || defaultFrameEntry();
     var t = opt.totals;
     var lines = [];
     if (it.eyesMode !== 'oi') lines.push(['½ Par OD: ' + describeEyeItem(opt.prodOd), Q.fmtMoney(t.odPrice), false]);
     if (it.eyesMode !== 'od') lines.push(['½ Par OI: ' + describeEyeItem(opt.prodOi), Q.fmtMoney(t.oiPrice), false]);
     if (fr.mode !== 'none') {
-      lines.push(['Armazón: ' + frameSummaryText(fr), fr.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice), false]);
+      lines.push([clientFrameLabel(fr), fr.mode === 'propio' ? '$ 0 (Propio)' : Q.fmtMoney(t.framePrice), false]);
     }
     if (t.discountAmount > 0) {
-      lines.push(['Descuento / Obra Social' + (q.discountNote ? ' (' + q.discountNote + ')' : ''), '- ' + Q.fmtMoney(t.discountAmount), false]);
+      var note = String(it.discountNote || '').trim();
+      lines.push(['Descuento / Obra Social' + (note ? ' (' + note + ')' : ''), '- ' + Q.fmtMoney(t.discountAmount), false]);
     }
     lines.push(['Total de lista', Q.fmtMoney(t.listTotal), true]);
     if (t.depositAmount > 0) {
@@ -1478,6 +1742,12 @@
       lines.push(['Saldo a financiar / abonar', Q.fmtMoney(t.balanceBase), true]);
     }
     return lines;
+  }
+
+  function optionDisplayTitle(opt, usoLabel) {
+    var base = 'Grupo ' + opt.groupNum;
+    if (opt.framesInGroup > 1) base += ' · Opción ' + opt.frameNum;
+    return base + ' · Uso: ' + usoLabel;
   }
 
   function refreshQuotePreview() {
@@ -1497,17 +1767,16 @@
       alerts.appendChild(div);
     });
 
-    var q = state.quote;
     var usoLabels = { lejos: 'Lejos', cerca: 'Cerca', multifocal: 'Multifocal', bifocal: 'Bifocal', ocupacional: 'Ocupacional' };
     var eyesLabels = { both: 'Ambos ojos (OD + OI)', od: 'Solo OD', oi: 'Solo OI' };
     var multi = snap.optionSnapshots.length > 1;
 
-    var optionsHtml = snap.optionSnapshots.map(function (opt, idx) {
+    var optionsHtml = snap.optionSnapshots.map(function (opt) {
       var it = opt.item;
       var t = opt.totals;
       var usoLabel = usoLabels[it.uso] || it.uso;
 
-      var itemRows = buildOptionLines(opt, q).map(function (ln) {
+      var itemRows = buildOptionLines(opt).map(function (ln) {
         var left = ln[2] ? '<b>' + esc(ln[0]) + '</b>' : esc(ln[0]);
         var right = ln[2] ? '<b>' + esc(ln[1]) + '</b>' : esc(ln[1]);
         return '<tr><td class="left">' + left + '</td><td class="right">' + right + '</td></tr>';
@@ -1528,7 +1797,7 @@
           '<span><b>' + esc(Q.fmtMoney(p.cuotaMensual)) + '/mes</b><div class="qs-pay-sub">Total financiado: ' + esc(Q.fmtMoney(p.total)) + '</div></span></div>';
       }).join('');
 
-      var titleHtml = '<div class="qs-option-title"><span>Grupo ' + (idx + 1) + ' · Uso: ' + esc(usoLabel) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>';
+      var titleHtml = '<div class="qs-option-title"><span>' + esc(optionDisplayTitle(opt, usoLabel)) + '</span><span>' + esc(eyesLabels[it.eyesMode] || '') + '</span></div>';
 
       return '<div class="qs-option-block">' +
         titleHtml +
@@ -1543,10 +1812,10 @@
         '</div></div>';
     }).join('');
 
-    // Sin tabla de graduación para el cliente (regla #3: oculta al imprimir/enviar, guardada en Sheets).
+    // Sin tabla de graduación ni datos identificatorios de armazón para el cliente.
     $('#quote-sheet').innerHTML =
       '<div class="qs-head"><div><div class="qs-title">' + esc(C.OPTICA_NAME || 'Óptica') + '</div>' +
-      '<div class="qs-sub">Presupuesto' + (multi ? (' (' + snap.optionSnapshots.length + ' grupos)') : '') + '</div></div>' +
+      '<div class="qs-sub">Presupuesto' + (multi ? (' (' + snap.optionSnapshots.length + ' opciones)') : '') + '</div></div>' +
       '<div class="qs-sub">Fecha: ' + esc(snap.fechaStr) + '<br>Válido hasta: ' + esc(snap.validaStr) + '</div></div>' +
       '<div class="qs-meta">' +
       '<div><b>Cliente:</b> ' + esc(snap.extra.nombre || snap.rx.paciente || '—') + '</div>' +
@@ -1574,7 +1843,6 @@
 
   function generateQuotePngBlob() {
     var snap = buildQuoteSnapshot();
-    var q = state.quote;
     var W = 900;
     var pad = 42;
     var usoLabels = { lejos: 'Lejos', cerca: 'Cerca', multifocal: 'Multifocal', bifocal: 'Bifocal', ocupacional: 'Ocupacional' };
@@ -1582,16 +1850,18 @@
 
     var blocks = snap.optionSnapshots.map(function (opt, idx) {
       var t = opt.totals;
-      var lines = buildOptionLines(opt, q);
+      var lines = buildOptionLines(opt);
       var cardGroups = getCardGroups(t);
       var headerH = 30;
       var linesH = lines.length * 36;
       var payH = 98 + cardGroups.length * 26 + t.cristalinoOptions.length * 32;
       var totalH = headerH + linesH + 6 + payH + 26;
+      var usoLabel = usoLabels[opt.item.uso] || opt.item.uso;
       return {
         idx: idx, opt: opt, t: t, lines: lines, cardGroups: cardGroups,
         headerH: headerH, payH: payH, totalH: totalH,
-        usoLabel: usoLabels[opt.item.uso] || opt.item.uso
+        usoLabel: usoLabel,
+        title: optionDisplayTitle(opt, usoLabel).toUpperCase()
       };
     });
 
@@ -1613,7 +1883,7 @@
     ctx.fillText(C.OPTICA_NAME || 'Óptica Cristalino', pad, 44);
     ctx.font = '16px system-ui, sans-serif';
     var subHdr = multi
-      ? ('Presupuesto Óptico · ' + blocks.length + ' grupos independientes')
+      ? ('Presupuesto Óptico · ' + blocks.length + ' opciones')
       : ('Presupuesto Óptico · Uso: ' + blocks[0].usoLabel);
     ctx.fillText(subHdr, pad, 72);
     ctx.textAlign = 'right';
@@ -1635,7 +1905,7 @@
       ctx.fillStyle = '#115e59';
       ctx.font = 'bold 15px system-ui, sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('GRUPO ' + (blk.idx + 1) + '  ·  USO: ' + blk.usoLabel.toUpperCase(), pad + 10, y + 1);
+      ctx.fillText(blk.title, pad + 10, y + 1);
       y += blk.headerH;
 
       blk.lines.forEach(function (ln) {
@@ -1729,16 +1999,18 @@
     toast('Imagen descargada (' + fileName + '). Adjuntala en WhatsApp.');
   }
 
-  function buildQuoteItemsList(snap, q) {
+  function buildQuoteItemsList(snap) {
     return snap.optionSnapshots.map(function (opt, idx) {
       var it = opt.item;
-      var fr = it.frame || { mode: 'none', rimType: 'completo', detail: '', price: 0 };
+      var fr = opt.frame || defaultFrameEntry();
       var t = opt.totals;
+      var note = String(it.discountNote || '').trim();
       var cristalinoTxt = t.cristalinoOptions.map(function (p) {
         return p.cuotas + '×' + Q.fmtMoney(p.cuotaMensual) + ' (' + Q.fmtMoney(p.total) + ')';
       }).join(' | ');
       return {
         opcion: idx + 1,
+        grupo: opt.groupNum,
         uso: it.uso,
         eyesMode: it.eyesMode,
         odNombre: it.eyesMode === 'oi' ? '' : (opt.prodOd ? opt.prodOd.nombre : ''),
@@ -1747,9 +2019,12 @@
         oiNombre: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.nombre : ''),
         oiTipo: it.eyesMode === 'od' ? '' : (opt.prodOi ? opt.prodOi.tipo : ''),
         oiPrecio: it.eyesMode === 'od' ? '' : String(t.oiPrice),
-        armazon: fr.mode === 'none' ? '' : frameSummaryText(fr),
+        armazon: fr.mode === 'none' ? '' : internalFrameSummaryText(fr),
+        armazonMarca: fr.mode === 'none' ? '' : String(fr.marca || '').trim(),
+        armazonModelo: fr.mode === 'none' ? '' : String(fr.modelo || '').trim(),
+        armazonColor: fr.mode === 'none' ? '' : String(fr.color || '').trim(),
         armazonPrecio: String(t.framePrice),
-        descuento: t.discountAmount ? (String(t.discountAmount) + (q.discountNote ? ' (' + q.discountNote + ')' : '')) : '0',
+        descuento: t.discountAmount ? (String(t.discountAmount) + (note ? ' (' + note + ')' : '')) : '0',
         sena: String(t.depositAmount),
         totalLista: String(t.listTotal),
         totalEfectivo: String(t.cashTotal),
@@ -1788,7 +2063,7 @@
       });
     });
 
-    var quoteItems = buildQuoteItemsList(snap, q);
+    var quoteItems = buildQuoteItemsList(snap);
 
     return {
       newCatalogItems: newCatalogItems,
@@ -1798,6 +2073,7 @@
         image: state.photoUploaded ? '' : (state.image || ''),
         fotoUrl: state.existingFotoUrl || '',
         isReflotado: Boolean(state.originUuid),
+        isManualRx: Boolean(state.isManualRx),
         originUuid: state.originUuid || '',
         photoName: nameField ? nameField.value : '',
         rx: snap.rx,
@@ -1862,12 +2138,43 @@
 
   // ---------- Cierre de venta (Paso 5) ----------
 
+  function renderSoldGroupsCheckboxes() {
+    var root = $('#close-sold-groups');
+    if (!root) return;
+    root.innerHTML = '';
+    var snap = buildQuoteSnapshot();
+    var opts = snap.optionSnapshots || [];
+    var single = opts.length === 1;
+    opts.forEach(function (opt, idx) {
+      var lbl = document.createElement('label');
+      lbl.className = 'sold-group-opt';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.name = 'soldGroup';
+      cb.value = String(idx + 1);
+      if (single) cb.checked = true;
+      var title = 'Grupo ' + opt.groupNum + (opt.framesInGroup > 1 ? ' (Armazón ' + opt.frameNum + ')' : '');
+      var crystalNom = opt.item.eyesMode === 'oi'
+        ? (opt.prodOi ? opt.prodOi.nombre : '')
+        : (opt.prodOd ? opt.prodOd.nombre : '');
+      var frameTxt = opt.frame && opt.frame.mode !== 'none' ? internalFrameSummaryText(opt.frame) : 'Solo cristales';
+      var txt = document.createElement('span');
+      txt.textContent = title + ' · ' + (crystalNom || opt.item.uso) + ' · ' + frameTxt + ' — ' + Q.fmtMoney(opt.totals.listTotal);
+      lbl.appendChild(cb);
+      lbl.appendChild(txt);
+      root.appendChild(lbl);
+    });
+  }
+
   function syncCloseFields() {
     var soldVal = ($('#close-form').elements.sold && $('#close-form').elements.sold.value) || '';
     var isYes = soldVal === 'si';
     var isNo = soldVal === 'no';
     $('#close-yes-fields').hidden = !isYes;
     $('#close-no-fields').hidden = !isNo;
+    document.querySelectorAll('#close-sold-groups input[name="soldGroup"]').forEach(function (cb) {
+      cb.disabled = !isYes;
+    });
     ['#c-ot', '#c-monto', '#c-tipo-lente'].forEach(function (id) {
       var el = $(id);
       el.disabled = !isYes;
@@ -1892,6 +2199,7 @@
     link.hidden = !res.fotoUrl;
     if (res.fotoUrl) link.href = res.fotoUrl;
     $('#close-form').reset();
+    renderSoldGroupsCheckboxes();
     syncCloseFields();
     setError('#close-error', '');
     go('done');
@@ -1907,9 +2215,21 @@
     if (!form.reportValidity()) return;
     setError('#close-error', '');
 
+    var sold = form.elements.sold.value === 'si';
+    var soldOptions = [];
+    if (sold) {
+      document.querySelectorAll('#close-sold-groups input[name="soldGroup"]:checked').forEach(function (cb) {
+        soldOptions.push(Number(cb.value));
+      });
+      var hasSoldCheckboxes = document.querySelectorAll('#close-sold-groups input[name="soldGroup"]').length > 0;
+      if (hasSoldCheckboxes && !soldOptions.length) {
+        setError('#close-error', 'Indicá al menos un grupo / opción vendida.');
+        return;
+      }
+    }
+
     if (state.inFlightSave) await state.inFlightSave;
     markStep('cierreSec');
-    var sold = form.elements.sold.value === 'si';
     var extraFields = collectExtraFields();
     var nameField = extraFields.find(function (f) { return f.key === C.PHOTO_NAME_FIELD; });
     var payload = {
@@ -1918,16 +2238,19 @@
       image: state.photoUploaded ? '' : (state.image || ''),
       fotoUrl: state.existingFotoUrl || '',
       isReflotado: Boolean(state.originUuid),
+      isManualRx: Boolean(state.isManualRx),
       originUuid: state.originUuid || '',
       photoName: nameField ? nameField.value : '',
       closure: sold ? {
         sold: true,
+        soldOptions: soldOptions,
         ot: $('#c-ot').value.trim(),
         monto: Number($('#c-monto').value) || 0,
         tipoLente: $('#c-tipo-lente').value.trim(),
         motivo: ''
       } : {
         sold: false,
+        soldOptions: [],
         ot: '',
         monto: '',
         tipoLente: '',
@@ -1972,19 +2295,34 @@
     return { amount: Math.max(0, Number(m[1].replace(',', '.')) || 0), note: (m[2] || '').trim() };
   }
 
-  function parseFrameFromSheet(desc, priceRaw) {
+  function parseFrameFromSheet(optRow) {
+    var desc = typeof optRow === 'object' ? (optRow.armazon || '') : String(optRow || '');
+    var priceRaw = typeof optRow === 'object' ? (optRow.armazonPrecio || 0) : (arguments[1] || 0);
     var s = String(desc || '').trim();
     var price = Math.max(0, Number(priceRaw) || 0);
-    if (!s || /sin armaz[oó]n/i.test(s)) return defaultFrameState();
+    var marca = typeof optRow === 'object' ? String(optRow.armazonMarca || '').trim() : '';
+    var modelo = typeof optRow === 'object' ? String(optRow.armazonModelo || '').trim() : '';
+    var color = typeof optRow === 'object' ? String(optRow.armazonColor || '').trim() : '';
+    if ((!s || /sin armaz[oó]n/i.test(s)) && !marca && !modelo && !color) return defaultFrameEntry();
     var rim = 'completo';
     if (/semi al aire|tanza/i.test(s)) rim = 'semi';
     else if (/ranurado|al aire/i.test(s)) rim = 'aire';
     var isPropio = /propio/i.test(s);
-    var parts = s.split('·').map(function (p) { return p.trim(); });
-    var detail = parts.length >= 3 ? parts.slice(2).join(' · ') : '';
+    if (!marca && !modelo && !color && s) {
+      var parts = s.split('·').map(function (p) { return p.trim(); });
+      var metaParts = parts.length >= 3 ? parts.slice(2) : [];
+      marca = metaParts[0] || '';
+      modelo = metaParts[1] || '';
+      color = metaParts.slice(2).join(' · ') || '';
+    }
     return {
       frameModeSelect: isPropio ? 'propio' : ('nuevo_' + rim),
-      frame: { mode: isPropio ? 'propio' : 'nuevo', rimType: rim, detail: detail, price: isPropio ? 0 : price }
+      mode: isPropio ? 'propio' : 'nuevo',
+      rimType: rim,
+      marca: marca,
+      modelo: modelo,
+      color: color,
+      price: isPropio ? 0 : price
     };
   }
 
@@ -2038,6 +2376,7 @@
       });
 
       state.image = null;
+      state.isManualRx = false;
       state.existingFotoUrl = entry.fotoUrl || '';
       state.originUuid = (entry.uuid && /^[0-9a-f-]{36}$/i.test(entry.uuid)) ? entry.uuid : null;
       state.uuid = newUuid();
@@ -2055,6 +2394,7 @@
       var form = $('#extra-form');
       form.reset();
       var em = entry.extraMap || {};
+      syncConvenioSelectOptions(em.convenio);
       C.EXTRA_FIELDS.forEach(function (f) {
         var el = form.elements[f.key];
         if (el && em[f.key] !== undefined && em[f.key] !== null) {
@@ -2068,7 +2408,9 @@
       var rx = collectRx();
       var opts = Array.isArray(entry.options) ? entry.options : [];
       if (opts.length) {
-        var items = opts.map(function (o) {
+        var items = [];
+        var itemByGrupo = {};
+        opts.forEach(function (o, oIdx) {
           var uso = o.uso || 'lejos';
           var eyesMode = o.eyesMode || 'both';
           var eff = Q.resolveEffectiveRx(rx, uso);
@@ -2078,21 +2420,26 @@
             if (od.mode === 'manual' || od.codigo) oi = copyEyeState(od);
             else if (oi.mode === 'manual' || oi.codigo) od = copyEyeState(oi);
           }
-          var fr = parseFrameFromSheet(o.armazon, o.armazonPrecio);
-          return {
-            uso: uso,
-            eyesMode: eyesMode,
-            od: od,
-            oi: oi,
-            frameModeSelect: fr.frameModeSelect,
-            frame: fr.frame
-          };
+          var fr = parseFrameFromSheet(o);
+          var gKey = o.grupo > 0 ? ('G:' + o.grupo) : ('L:' + oIdx);
+          if (!itemByGrupo[gKey]) {
+            var disc = parseDiscountFromSheet(o.descuento);
+            itemByGrupo[gKey] = {
+              uso: uso,
+              eyesMode: eyesMode,
+              od: od,
+              oi: oi,
+              frames: [fr],
+              discount: disc.amount,
+              discountNote: disc.note
+            };
+            items.push(itemByGrupo[gKey]);
+          } else {
+            itemByGrupo[gKey].frames.push(fr);
+          }
         });
-        var disc = parseDiscountFromSheet(opts[0].descuento);
         state.quote = {
           items: items,
-          discount: disc.amount,
-          discountNote: disc.note,
           deposit: Math.max(0, Number(opts[0].sena) || 0)
         };
       } else {
@@ -2201,6 +2548,7 @@
       image: state.photoUploaded ? '' : (state.image || ''),
       fotoUrl: state.existingFotoUrl || '',
       isReflotado: Boolean(state.originUuid),
+      isManualRx: Boolean(state.isManualRx),
       originUuid: isUpdatingOrigin ? '' : (state.originUuid || ''),
       photoName: photoName,
       closure: { motivo: reasonEl.value },
@@ -2208,7 +2556,7 @@
     };
     if (!isUpdatingOrigin) {
       var snap = buildQuoteSnapshot();
-      var quoteItems = buildQuoteItemsList(snap, state.quote);
+      var quoteItems = buildQuoteItemsList(snap);
       payload.rx = rxValues;
       payload.extras = state.extras.filter(function (x) { return x.decision === 'keep' && x.texto.trim(); })
         .map(function (x) { return x.texto.trim(); });
@@ -2264,6 +2612,7 @@
       image: state.photoUploaded ? '' : (state.image || ''),
       fotoUrl: state.existingFotoUrl || '',
       isReflotado: Boolean(state.originUuid),
+      isManualRx: Boolean(state.isManualRx),
       originUuid: state.originUuid || '',
       photoName: photoName,
       rx: rxValues,
@@ -2277,7 +2626,7 @@
     };
     if (state.quoteInitialized) {
       var snap = buildQuoteSnapshot();
-      var quoteItems = buildQuoteItemsList(snap, state.quote);
+      var quoteItems = buildQuoteItemsList(snap);
       payload.quoteItems = quoteItems;
       payload.quoteSummary = quoteItems[0];
     }
@@ -2303,6 +2652,7 @@
     clearDraft();
     state.image = null;
     state.ocr = null;
+    state.isManualRx = false;
     state.extras = [];
     state.original = {};
     state.uuid = null;
@@ -2356,12 +2706,17 @@
 
     $('#in-camera').addEventListener('change', onFile);
     $('#in-file').addEventListener('change', onFile);
+    $('#btn-manual-rx').addEventListener('click', startManualRx);
+    $('#btn-close-manual-rx').addEventListener('click', function () { resetFlow(); go('capture'); });
     $('#btn-retake').addEventListener('click', retake);
     $('#btn-ocr').addEventListener('click', runOcr);
     $('#review-img').addEventListener('click', openZoom);
     $('#zoom-close').addEventListener('click', function () { $('#zoom').hidden = true; });
     $('#btn-add-extra').addEventListener('click', addExtra);
-    $('#btn-back-capture').addEventListener('click', function () { retake(); go('capture'); });
+    $('#btn-back-capture').addEventListener('click', function () {
+      if (state.isManualRx && !state.photoUploaded) { resetFlow(); go('capture'); return; }
+      retake(); go('capture');
+    });
     $('#btn-to-extra').addEventListener('click', toExtra);
     $('#btn-back-review').addEventListener('click', function () { go('review'); });
     $('#extra-form').addEventListener('submit', toQuote);
@@ -2386,12 +2741,10 @@
       if (blocks.length) blocks[blocks.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
 
-    $('#q-discount').addEventListener('input', function () { state.quote.discount = Math.max(0, Number($('#q-discount').value) || 0); refreshQuotePreview(); saveDraft(); });
-    $('#q-discount-note').addEventListener('input', function () { state.quote.discountNote = $('#q-discount-note').value; refreshQuotePreview(); saveDraft(); });
     $('#q-deposit').addEventListener('input', function () { state.quote.deposit = Math.max(0, Number($('#q-deposit').value) || 0); refreshQuotePreview(); saveDraft(); });
 
     window.addEventListener('beforeunload', function (e) {
-      if (state.screen !== 'login' && (state.image || state.existingFotoUrl || state.originUuid || ['review', 'extra', 'quote', 'done'].indexOf(state.screen) >= 0)) {
+      if (state.screen !== 'login' && (state.image || state.existingFotoUrl || state.originUuid || state.isManualRx || ['review', 'extra', 'quote', 'done'].indexOf(state.screen) >= 0)) {
         saveDraft();
         e.preventDefault();
         e.returnValue = '';

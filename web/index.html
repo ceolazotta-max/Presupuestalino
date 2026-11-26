@@ -57,6 +57,7 @@
             <input id="in-file" type="file" accept="image/jpeg,image/png,image/heic,image/webp" hidden>
             Elegir imagen existente
           </label>
+          <button id="btn-manual-rx" class="btn ghost" type="button">✍️ Ingresar datos manualmente</button>
         </div>
         <div id="capture-preview" hidden>
           <img id="preview-img" class="preview" alt="Vista previa de la receta">
@@ -79,11 +80,14 @@
           <figcaption>Tocá la imagen para ampliar</figcaption>
         </figure>
         <div class="card">
-          <h2>Revisá y corregí</h2>
+          <div class="review-head">
+            <h2 id="review-title">Revisá y corregí</h2>
+            <button id="btn-close-manual-rx" class="btn ghost btn-close-x" type="button" title="Cerrar y volver" aria-label="Cerrar carga manual" hidden>✕</button>
+          </div>
           <div id="not-rx-warning" class="alert warn" hidden>
             ⚠️ La imagen no parece una receta óptica. Verificá antes de continuar.
           </div>
-          <p class="legend">
+          <p id="review-legend" class="legend">
             <span class="chip conf-baja">Dudoso</span>
             <span class="chip conf-media">Revisar</span>
             <span class="chip conf-alta">Seguro</span>
@@ -127,23 +131,13 @@
             <button id="btn-add-quote-item" class="btn ghost full" type="button">+ Agregar más productos</button>
           </div>
 
-          <h3>Descuento y seña</h3>
+          <h3>Seña</h3>
           <div class="rx-list">
-            <label class="field">
-              <span>Descuento / Obra Social ($)</span>
-              <input id="q-discount" type="number" min="0" step="100" inputmode="numeric" value="0">
-            </label>
-            <label class="field">
-              <span>Detalle descuento / OS</span>
-              <input id="q-discount-note" type="text" maxlength="60" placeholder="Ej. OSDE 310 / Promo">
-            </label>
             <label class="field">
               <span>Seña ($)</span>
               <input id="q-deposit" type="number" min="0" step="100" inputmode="numeric" value="0">
             </label>
           </div>
-
-          <div id="quote-alerts" class="quote-alerts" aria-live="polite"></div>
 
           <div class="actions">
             <button id="btn-back-extra" class="btn ghost" type="button">← Datos</button>
@@ -154,6 +148,7 @@
         </div>
 
         <div class="quote-preview-col">
+          <div id="quote-alerts" class="quote-alerts no-print" aria-live="polite"></div>
           <article id="quote-sheet" class="card quote-sheet" aria-label="Ficha técnica y presupuesto"></article>
           <div class="actions no-print">
             <button id="btn-print-quote" class="btn ghost" type="button">🖨️ Imprimir / PDF</button>
@@ -188,6 +183,10 @@
             </div>
           </div>
           <div id="close-yes-fields" hidden>
+            <div class="field">
+              <span>¿Qué grupo(s) / opción(es) se vendieron? <b class="req">*</b></span>
+              <div id="close-sold-groups" class="sold-groups-list"></div>
+            </div>
             <label class="field"><span>Número OT <b class="req">*</b></span><input id="c-ot" type="text" maxlength="60"></label>
             <label class="field"><span>Monto <b class="req">*</b></span><input id="c-monto" type="number" min="0" step="100" inputmode="numeric"></label>
             <label class="field"><span>Tipo Lente <b class="req">*</b></span><input id="c-tipo-lente" type="text" maxlength="120"></label>

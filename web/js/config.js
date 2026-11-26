@@ -23,6 +23,20 @@ window.APP_CONFIG = {
     { key: 'telefono', label: 'Teléfono', type: 'tel', required: true, autocomplete: 'tel' },
     { key: 'email', label: 'Email cliente', type: 'email', required: true, autocomplete: 'email' },
     {
+      key: 'convenio',
+      label: 'Convenio',
+      type: 'select',
+      required: true,
+      options: ['Sin convenio / Particular', 'PAMI', 'APROSS', 'OSDE', 'OSECAC', 'Otro']
+    },
+    {
+      key: 'convenio_otro',
+      label: 'Cuál Convenio',
+      type: 'text',
+      required: true,
+      showWhen: { field: 'convenio', value: 'Otro' }
+    },
+    {
       key: 'derivacion',
       label: 'Derivación',
       type: 'select',

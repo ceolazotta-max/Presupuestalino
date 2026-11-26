@@ -15,8 +15,10 @@ function buildRxFields() {
     { key: 'paciente', label: 'Paciente', group: 'encabezado', type: 'text' },
     { key: 'dni', label: 'DNI paciente', group: 'encabezado', type: 'text' },
     { key: 'fecha_receta', label: 'Fecha receta', group: 'encabezado', type: 'date' },
+    { key: 'institucion', label: 'Institución', group: 'encabezado', type: 'text', required: true },
     { key: 'medico', label: 'Médico', group: 'encabezado', type: 'text' },
-    { key: 'matricula', label: 'Matrícula', group: 'encabezado', type: 'text' }
+    { key: 'matricula', label: 'Matrícula', group: 'encabezado', type: 'text' },
+    { key: 'matricula_esp', label: 'Matrícula Especialista (M.E.)', group: 'encabezado', type: 'text' }
   ];
   ['lejos', 'cerca'].forEach(function (dist) {
     ['od', 'oi'].forEach(function (eye) {
@@ -33,6 +35,7 @@ function buildRxFields() {
     { key: 'adicion', label: 'Adición', group: 'otros', type: 'adicion' },
     { key: 'dip', label: 'DIP', group: 'otros', type: 'dip' },
     { key: 'prisma', label: 'Prisma / base', group: 'otros', type: 'text' },
+    { key: 'ametropias', label: 'Ametropías', group: 'otros', type: 'text' },
     { key: 'tipo_lente', label: 'Tipo de lente', group: 'otros', type: 'text' },
     { key: 'tratamientos', label: 'Tratamientos', group: 'otros', type: 'text' },
     { key: 'observaciones', label: 'Observaciones', group: 'otros', type: 'longtext' }
@@ -201,13 +204,17 @@ function rateKey(action, email, nowMs) {
 /** Valida y limpia campos extra enviados por el cliente. */
 function sanitizeExtraFields(list) {
   if (!Array.isArray(list)) return [];
-  return list.slice(0, 20).map(function (f) {
+  return list.slice(0, 30).map(function (f) {
     var key = f && f.key;
     var label = String((f && f.label) || '').replace(/[^\p{L}\p{N} ._()/?¿-]/gu, '').trim().slice(0, 40);
     if (key === 'nombre' || /^apellido y nombre cliente$/i.test(label)) {
       label = 'Nombre cliente';
     } else if (key === 'dni' || /^dni$/i.test(label)) {
       label = 'DNI';
+    } else if (key === 'convenio' || /^convenio$/i.test(label)) {
+      label = 'Convenio';
+    } else if (key === 'convenio_otro' || /^cu[aá]l convenio$/i.test(label)) {
+      label = 'Cuál Convenio';
     } else if (key === 'origen_nombre' || /^nombre$/i.test(label)) {
       label = 'Nombre Recomendador';
     }
@@ -217,7 +224,7 @@ function sanitizeExtraFields(list) {
       val = digits ? toSheetValue(digits, 20) : '';
     }
     var isName = (f && (key === 'nombre' || key === 'derivacion_doctor' || key === 'derivacion_secretaria' || key === 'origen_nombre')) ||
-      /nombre|doctor|secretaria|recomendador/i.test(label);
+      (!/^convenio|cu[aá]l convenio$/i.test(label) && /nombre|doctor|secretaria|recomendador/i.test(label));
     if (typeof val === 'string' && val && isName) val = formatPersonName(val);
     return { label: label, value: val };
   }).filter(function (f) { return f.label; });
@@ -260,6 +267,45 @@ var SEED_PAYMENT_ROWS = [
   ['Plan Cristalino', '', '3 cuotas', 3, 20, 'Sí'],
   ['Plan Cristalino', '', '6 cuotas', 6, 42, 'Sí']
 ];
+
+var CONVENIOS_HEADERS = ['Nombre_Convenio', 'Activo'];
+
+var SEED_CONVENIOS_ROWS = [
+  ['Sin convenio / Particular', 'Sí'],
+  ['PAMI', 'Sí'],
+  ['APROSS', 'Sí'],
+  ['OSDE', 'Sí'],
+  ['OSECAC', 'Sí']
+];
+
+function isRowActive_(raw) {
+  var s = String(raw == null ? 'Sí' : raw).trim().toLowerCase();
+  if (!s) return true;
+  return ['no', 'false', '0', 'inactivo'].indexOf(s) < 0;
+}
+
+/** Convierte filas de la pestaña Convenios en lista de nombres activos únicos. */
+function parseConveniosRows(rows) {
+  var fallback = SEED_CONVENIOS_ROWS.map(function (r) { return r[0]; });
+  if (!Array.isArray(rows) || rows.length < 2) return fallback;
+  var headers = rows[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
+  var nameCol = headers.indexOf('nombre_convenio');
+  if (nameCol < 0) nameCol = 0;
+  var activeCol = headers.indexOf('activo');
+  var seen = {};
+  var out = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i] || [];
+    var nom = String(r[nameCol] == null ? '' : r[nameCol]).trim();
+    if (!nom || /^otro$/i.test(nom)) continue;
+    if (activeCol >= 0 && !isRowActive_(r[activeCol])) continue;
+    var norm = nom.toLowerCase();
+    if (seen[norm]) continue;
+    seen[norm] = true;
+    out.push(nom);
+  }
+  return out.length ? out : fallback;
+}
 
 function normalizeCatalogTipo_(raw) {
   var s = String(raw || '').trim();
@@ -541,6 +587,20 @@ function formatDniDots(s) {
   return digits ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : '';
 }
 
+/** Formatea cualquier fecha/epoch/ISO a hora Argentina (GMT-3) YYYY-MM-DD HH:mm:ss. */
+function formatArTimestamp(input) {
+  if (input == null || input === '') return '';
+  if (typeof input === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(input.trim())) {
+    return input.trim();
+  }
+  var d = input instanceof Date ? input : new Date(input);
+  if (isNaN(d.getTime())) return String(input).trim();
+  var ar = new Date(d.getTime() - 3 * 3600000);
+  var p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return ar.getUTCFullYear() + '-' + p(ar.getUTCMonth() + 1) + '-' + p(ar.getUTCDate()) + ' ' +
+    p(ar.getUTCHours()) + ':' + p(ar.getUTCMinutes()) + ':' + p(ar.getUTCSeconds());
+}
+
 /** Busca y agrupa presupuestos en filas de Google Sheets por Nombre cliente o DNI, ordenados de más nuevo a más viejo. */
 function searchBudgetsInSheetRows(rows, query) {
   if (!Array.isArray(rows) || rows.length < 2) return [];
@@ -587,6 +647,8 @@ function searchBudgetsInSheetRows(rows, query) {
         dni: dniCli || dniPac,
         telefono: cellAny(r, ['Teléfono', 'Telefono']),
         email: cellAny(r, ['Email cliente', 'Email']),
+        convenio: cellAny(r, ['Convenio']),
+        convenio_otro: cellAny(r, ['Cuál Convenio', 'Cual Convenio']),
         derivacion: cellAny(r, ['Derivación', 'Derivacion']),
         derivacion_doctor: cellAny(r, ['Nombre Doctor']),
         derivacion_secretaria: cellAny(r, ['Nombre Secretaria']),
@@ -626,7 +688,7 @@ function searchBudgetsInSheetRows(rows, query) {
     var fAct = cellAny(r, ['Última actualización', 'Timestamp']);
     if (fAct && (!grp.fecha || fAct > grp.fecha)) grp.fecha = fAct;
     var est = cellAny(r, ['Estado']);
-    if (est) grp.estado = est;
+    if (est && !(grp.estado === 'VENTA CONCRETADA' && est === 'NO ELEGIDA')) grp.estado = est;
     if (!grp.nombre || grp.nombre === '—') grp.nombre = nombreCli || paciente || '—';
     if (!grp.dni) grp.dni = dniCli || dniPac;
     if (!grp.fotoUrl) grp.fotoUrl = cellAny(r, ['Foto']);
@@ -638,6 +700,7 @@ function searchBudgetsInSheetRows(rows, query) {
     if (uso || odNom || oiNom || totLst) {
       grp.options.push({
         opcion: Number(cellAny(r, ['Opción #', 'Opcion #'])) || (grp.options.length + 1),
+        grupo: Number(cellAny(r, ['Grupo #'])) || 0,
         uso: uso || 'lejos',
         eyesMode: cellAny(r, ['Ojos cotizados']) || 'both',
         odNombre: odNom,
@@ -647,10 +710,14 @@ function searchBudgetsInSheetRows(rows, query) {
         oiTipo: cellAny(r, ['Tipo OI']),
         oiPrecio: cellAny(r, ['Precio ½ OI', 'Precio 1/2 OI']),
         armazon: cellAny(r, ['Armazón', 'Armazon']),
+        armazonMarca: cellAny(r, ['Armazón Marca', 'Armazon Marca']),
+        armazonModelo: cellAny(r, ['Armazón Modelo', 'Armazon Modelo']),
+        armazonColor: cellAny(r, ['Armazón Color', 'Armazon Color']),
         armazonPrecio: cellAny(r, ['Precio Armazón', 'Precio Armazon']),
         descuento: cellAny(r, ['Descuento / OS']),
         sena: cellAny(r, ['Seña', 'Sena']),
-        totalLista: totLst
+        totalLista: totLst,
+        grupoVendido: cellAny(r, ['Grupo Vendido'])
       });
     }
   }
@@ -690,6 +757,9 @@ if (typeof module !== 'undefined' && module.exports) {
     formatDniDots: formatDniDots,
     formatPersonName: formatPersonName, toSheetValue: toSheetValue,
     PAYMENT_HEADERS: PAYMENT_HEADERS, SEED_PAYMENT_ROWS: SEED_PAYMENT_ROWS,
-    parsePaymentRows: parsePaymentRows
+    parsePaymentRows: parsePaymentRows,
+    CONVENIOS_HEADERS: CONVENIOS_HEADERS, SEED_CONVENIOS_ROWS: SEED_CONVENIOS_ROWS,
+    parseConveniosRows: parseConveniosRows,
+    formatArTimestamp: formatArTimestamp
   };
 }

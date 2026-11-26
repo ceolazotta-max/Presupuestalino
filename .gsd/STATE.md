@@ -32,3 +32,27 @@
 **Next Wave TODO:**
 - Crear o abrir Google Sheet en Drive, pegar `SHEET_ID` y `DRIVE_FOLDER_ID` en Script Properties y correr `setupCheck()` (ver `docs/SETUP.md`).
 - Probar flujo completo en modo demo (`npm run serve`) y luego en Fase 3 con 10 recetas de prueba.
+
+## Wave 4 Summary
+
+**Objective:** Implementar carga manual en Paso 0, nuevos campos OCR (`Institución`, `M.E.`, `Ametropías`), pestaña `Convenios`, armazones múltiples ofuscados con Marca/Modelo/Color, descuentos por grupo, orden por precio descendente, checkboxes de venta por grupo y timestamps en GMT-3 (`America/Argentina/Buenos_Aires`).
+
+**Changes:**
+- Paso 0 carga manual sin foto con validación no-vacía y botón `✕` para cancelar, guardando `Es receta (IA) = Manual`.
+- Paso 2 + Gemini OCR: `Institución` obligatorio, `Matrícula Especialista (M.E.)` y `Ametropías` (+ `Tratamientos`).
+- Paso 3: `Convenio` sincronizado desde hoja `Convenios` autogenerada con `setupCheck` + opción `Otro` obligatoria.
+- Paso 4: alertas arriba a la derecha, cristales ordenados por precio descendente, múltiples armazones por grupo con `Marca *` / `Modelo *` / `Color *` ofuscados en salida al cliente (`Armazón de marca` / `Armazón propio`), y descuentos por grupo.
+- Paso 5: checkboxes de grupos/opciones vendidos (`VENTA CONCRETADA` + `Grupo Vendido = Sí` vs `NO ELEGIDA`), y unificación de `Timestamp`, `Última actualización` e `Inicio Captura` en GMT-3.
+
+**Files Touched:**
+- `apps-script/Logic.js`, `apps-script/Code.js`
+- `web/js/config.js`, `web/js/quote.js`, `web/js/mock.js`, `web/js/app.js`
+- `web/index.html`, `web/css/styles.css`, `web/sw.js`
+- `tests/logic.test.js`, `.gsd/STATE.md`
+
+**Verification:**
+- `node --check` en los 9 archivos JS: exit 0.
+- `node --test tests/logic.test.js`: 27/27 tests pasan.
+
+**Risks/Debt:**
+- Pegar `Logic.gs` y `Code.gs` en Apps Script, correr `setupCheck()` (crea pestaña `Convenios`), publicar nueva versión Web App y hacer `git push` + `Ctrl+F5`.
